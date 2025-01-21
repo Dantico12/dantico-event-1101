@@ -1,0 +1,996 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat System - Event Management Dashboard</title>
+    <link href='https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css' rel='stylesheet'>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'poppins', sans-serif;
+        }
+
+        :root {
+            --sidebar-width: 260px;
+            --collapsed-width: 60px;
+            --header-height: 60px;
+        }
+
+        body {
+            min-height: 100vh;
+            background: #081b29;
+            overflow-x: hidden;
+        }
+
+        /* Sidebar Styles */
+        .sidebar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            height: 100%;
+            width: var(--sidebar-width);
+            background: rgba(8, 27, 41, 0.9);
+            border-right: 2px solid #0ef;
+            transition: all 0.5s ease;
+            z-index: 100;
+        }
+
+        .sidebar.collapse {
+            width: var(--collapsed-width);
+        }
+
+        .sidebar-header {
+            height: var(--header-height);
+            display: flex;
+            align-items: center;
+            padding: 0 15px;
+            border-bottom: 2px solid #0ef;
+        }
+
+        .sidebar-header h2 {
+            color: #fff;
+            font-size: 20px;
+            margin-left: 15px;
+            white-space: nowrap;
+            transition: all 0.5s ease;
+        }
+
+        .sidebar.collapse .sidebar-header h2 {
+            opacity: 0;
+        }
+
+        .sidebar-menu {
+            padding: 10px 0;
+            height: calc(100% - var(--header-height));
+            overflow-y: auto;
+        }
+
+        .menu-category {
+            margin: 10px 0;
+        }
+
+        .category-title {
+            color: #0ef;
+            font-size: 12px;
+            text-transform: uppercase;
+            padding: 10px 20px;
+            letter-spacing: 1px;
+            opacity: 0.7;
+        }
+
+        .sidebar.collapse .category-title {
+            opacity: 0;
+        }
+
+        .menu-item {
+            padding: 12px 20px 12px 30px;
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .menu-item a {
+            text-decoration: none;
+            color: inherit;
+            display: flex;
+            align-items: center;
+            width: 100%;
+        }
+
+        .menu-item:hover {
+            background: rgba(0, 238, 255, 0.1);
+        }
+
+        .menu-item.active {
+            background: rgba(0, 238, 255, 0.15);
+        }
+
+        .menu-item i {
+            font-size: 24px;
+            min-width: 40px;
+            color: #0ef;
+            transition: all 0.3s ease;
+        }
+
+        .menu-item span {
+            color: #fff;
+            white-space: nowrap;
+            transition: all 0.3s ease;
+            margin-left: 10px;
+        }
+
+        .notification-badge {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: #0ef;
+            color: #081b29;
+            border-radius: 50%;
+            width: 18px;
+            height: 18px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* Main Content and Header Styles */
+        .main-content {
+            position: relative;
+            left: var(--sidebar-width);
+            width: calc(100% - var(--sidebar-width));
+            min-height: 100vh;
+            transition: all 0.5s ease;
+            padding: 20px;
+        }
+
+        .main-content.expand {
+            left: var(--collapsed-width);
+            width: calc(100% - var(--collapsed-width));
+        }
+
+        .header {
+            height: var(--header-height);
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            background: rgba(8, 27, 41, 0.9);
+            border: 2px solid #0ef;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        .toggle-btn {
+            font-size: 24px;
+            color: #0ef;
+            cursor: pointer;
+            background: none;
+            border: none;
+            outline: none;
+        }
+
+        .header-title {
+            color: #fff;
+            margin-left: 20px;
+            font-size: 20px;
+        }
+
+        .header-actions {
+            margin-left: auto;
+            display: flex;
+            gap: 15px;
+        }
+
+        .header-actions i {
+            font-size: 24px;
+            color: #0ef;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        /* Chat System Styles */
+        .chat-container {
+            background: rgba(8, 27, 41, 0.9);
+            border: 2px solid #0ef;
+            border-radius: 10px;
+            height: calc(100vh - 120px);
+            display: flex;
+            margin: 20px;
+        }
+
+        .chat-sidebar {
+            width: 250px;
+            border-right: 2px solid #0ef;
+            padding: 15px;
+        }
+
+        .chat-search {
+            padding: 10px;
+            background: rgba(0, 238, 255, 0.1);
+            border: 1px solid #0ef;
+            border-radius: 5px;
+            width: 100%;
+            color: #fff;
+            margin-bottom: 15px;
+        }
+
+        .chat-contacts {
+            overflow-y: auto;
+            height: calc(100% - 50px);
+        }
+
+        .contact {
+            display: flex;
+            align-items: center;
+            padding: 10px;
+            cursor: pointer;
+            border-radius: 5px;
+            margin-bottom: 5px;
+        }
+
+        .contact:hover {
+            background: rgba(0, 238, 255, 0.1);
+        }
+
+        .contact.active {
+            background: rgba(0, 238, 255, 0.15);
+        }
+
+        .contact.online .contact-status {
+            color: #00ff00;
+        }
+
+        .contact img {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            margin-right: 10px;
+            border: 1px solid #0ef;
+        }
+
+        .contact-info {
+            flex-grow: 1;
+            color: #fff;
+        }
+
+        .contact-name {
+            font-weight: bold;
+            margin-bottom: 2px;
+        }
+
+        .contact-status {
+            font-size: 12px;
+            color: #0ef;
+        }
+
+        .chat-main {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .chat-header {
+            padding: 15px;
+            border-bottom: 2px solid #0ef;
+            display: flex;
+            align-items: center;
+        }
+
+        .chat-messages {
+            flex-grow: 1;
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .message {
+            margin-bottom: 20px;
+            max-width: 70%;
+            opacity: 0;
+            transform: translateY(20px);
+            animation: messageAppear 0.3s forwards;
+        }
+
+        @keyframes messageAppear {
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message.received {
+            margin-right: auto;
+        }
+
+        .message.sent {
+            margin-left: auto;
+        }
+
+        .message-content {
+            padding: 10px 15px;
+            border-radius: 10px;
+            color: #fff;
+            word-break: break-word;
+        }
+
+        .received .message-content {
+            background: rgba(0, 238, 255, 0.1);
+            border: 1px solid #0ef;
+        }
+
+        .sent .message-content {
+            background: rgba(0, 238, 255, 0.2);
+            border: 1px solid #0ef;
+        }
+
+        .message-time {
+            font-size: 12px;
+            color: #0ef;
+            margin-top: 5px;
+            text-align: right;
+        }
+
+        .chat-input {
+            padding: 20px;
+            border-top: 2px solid #0ef;
+            display: flex;
+            gap: 10px;
+        }
+
+
+        /* Loading indicator */
+        .loading {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 238, 255, 0.2);
+            padding: 20px;
+            border-radius: 10px;
+            color: #fff;
+        }
+
+        .loading.active {
+            display: block;
+        }
+
+        .connection-status {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 10px 20px;
+            border-radius: 5px;
+            color: #fff;
+            font-size: 14px;
+            z-index: 1000;
+            display: none;
+        }
+
+        .connection-status.connected {
+            background: rgba(0, 255, 0, 0.2);
+            border: 1px solid #0f0;
+            display: block;
+        }
+
+        .connection-status.disconnected {
+            background: rgba(255, 0, 0, 0.2);
+            border: 1px solid #f00;
+            display: block;
+        }
+
+        /* Modified chat input styles */
+        .chat-input input {
+            flex-grow: 1;
+            padding: 10px;
+            background: rgba(0, 238, 255, 0.1);
+            border: 1px solid #0ef;
+            border-radius: 5px;
+            color: #fff;
+            /* Remove disabled styling */
+            opacity: 1;
+        }
+
+        .chat-input button {
+            padding: 10px 20px;
+            background: #0ef;
+            border: none;
+            border-radius: 5px;
+            color: #081b29;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            /* Remove disabled styling */
+            opacity: 1;
+        }
+
+        .chat-input button:hover {
+            background: #fff;
+        }
+    </style>
+</head>
+
+<body>
+    <input type="hidden" id="user-id" value="<?php echo htmlspecialchars($_SESSION['user_id'] ?? '1'); ?>">
+
+    <!-- Connection Status -->
+    <div class="connection-status">
+        <span class="status-text">Connecting...</span>
+    </div>
+    <!-- Sidebar -->
+    <nav class="sidebar">
+        <div class="sidebar-header">
+            <i class='bx bx-calendar-event' style="color: #0ef; font-size: 24px;"></i>
+            <h2>Dantico Events</h2>
+        </div>
+        <div class="sidebar-menu">
+            <!-- Dashboard -->
+            <div class="menu-category">
+                <div class="menu-item">
+                    <a href="./dashboard.php">
+                        <i class='bx bx-home-alt'></i>
+                        <span>Dashboard</span>
+                    </a>
+                </div>
+            </div>
+
+            <!-- Committees Section -->
+            <div class="menu-category">
+                <div class="category-title">Committees</div>
+                <div class="menu-item active">
+                    <a href="./add-committee.html">
+                        <i class='bx bx-plus-circle'></i>
+                        <span>Add Committee</span>
+                    </a>
+                </div>
+                <div class="menu-item">
+                    <a href="./committee-list.html">
+                        <i class='bx bx-group'></i>
+                        <span>Committee List</span>
+                    </a>
+                </div>
+            </div>
+
+            <!-- Communication Section -->
+            <div class="menu-category">
+                <div class="category-title">Communication</div>
+                <div class="menu-item">
+                    <a href="./chat.html">
+                        <i class='bx bx-message-rounded-dots'></i>
+                        <span>Chat System</span>
+                    </a>
+                </div>
+                <div class="menu-item">
+                    <a href="./video-conference.html">
+                        <i class='bx bx-video'></i>
+                        <span>Video Conference</span>
+                    </a>
+                </div>
+            </div>
+
+            <!-- Contributions Section -->
+            <div class="menu-category">
+                <div class="category-title">Contributions</div>
+                <div class="menu-item">
+                    <a href="./make_contribution.html">
+                        <i class='bx bx-plus-circle'></i>
+                        <span>Make Contribution</span>
+                    </a>
+                </div>
+                <div class="menu-item">
+                    <a href="./contributions.html">
+                        <i class='bx bx-money'></i>
+                        <span>Contributions</span>
+                    </a>
+                </div>
+            </div>
+
+            <!-- Reviews Section -->
+            <div class="menu-category">
+                <div class="category-title">Reviews</div>
+                <div class="menu-item">
+                    <a href="./minutes.html">
+                        <i class='bx bxs-timer'></i>
+                        <span>Minutes</span>
+                    </a>
+                </div>
+                <div class="menu-item">
+                    <a href="./tasks.html">
+                        <i class='bx bx-task'></i>
+                        <span>Tasks</span>
+                    </a>
+                </div>
+            </div>
+
+            <div class="menu-item">
+                <a href="./reports.html">
+                    <i class='bx bx-line-chart'></i>
+                    <span>Reports</span>
+                </a>
+            </div>
+        </div>
+
+
+        <!-- Other Tools -->
+        <div class="menu-category">
+            <div class="category-title">Tools</div>
+            <div class="menu-item">
+                <a href="./schedule.html">
+                    <i class='bx bx-calendar'></i>
+                    <span>Schedule</span>
+                </a>
+            </div>
+            <div class="menu-item">
+                <a href="./settings.html">
+                    <i class='bx bx-cog'></i>
+                    <span>Settings</span>
+                </a>
+            </div>
+        </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="main-content">
+        <div class="header">
+            <button class="toggle-btn">
+                <i class='bx bx-menu'></i>Failed to load contacts. Please try again later.
+            </button>
+            <h2 class="header-title">Chat System</h2>
+            <div class="header-actions">
+                <i class='bx bx-search'></i>
+                <i class='bx bx-bell'></i>
+                <i class='bx bx-user-circle'></i>
+            </div>
+        </div>
+
+        <div class="chat-container">
+            <div class="chat-sidebar">
+                <input type="text" class="chat-search" placeholder="Search messages...">
+                <div class="chat-contacts">
+                    <!-- Contacts will be dynamically populated -->
+                </div>
+            </div>
+
+            <div class="chat-main">
+                <div class="chat-header">
+                    <div class="chat-info">
+                        <h3>Event Chat</h3>
+                        <span class="participant-count">0 participants</span>
+                    </div>
+                </div>
+
+                <div class="chat-messages">
+                    <!-- Messages will be dynamically populated -->
+                </div>
+
+                <div class="chat-input">
+                    <input type="text" placeholder="Type your message...">
+                    <button><i class='bx bx-send'></i></button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading indicator -->
+    <div class="loading">
+        Connecting to chat server...
+    </div>
+
+    <script>
+        class ChatSystem {
+            constructor() {
+                this.ws = null;
+                this.eventId = new URLSearchParams(window.location.search).get('event_id') || '1';
+                this.userId = document.getElementById('user-id').value;
+                this.currentContact = null;
+
+                // Cache DOM elements
+                this.elements = {
+                    loading: document.querySelector('.loading'),
+                    messagesContainer: document.querySelector('.chat-messages'),
+                    chatInput: document.querySelector('.chat-input input'),
+                    sendButton: document.querySelector('.chat-input button'),
+                    contactsContainer: document.querySelector('.chat-contacts'),
+                    searchInput: document.querySelector('.chat-search'),
+                    currentContactName: document.querySelector('.chat-header h3'),
+                    participantCount: document.querySelector('.participant-count'),
+                    connectionStatus: document.querySelector('.connection-status'),
+                    statusText: document.querySelector('.connection-status .status-text')
+                };
+
+                // Set initial state
+                this.elements.chatInput.disabled = true;
+                this.elements.sendButton.disabled = true;
+
+                this.initializeEventListeners();
+                this.initializeWebSocket();
+            }
+
+            initializeWebSocket() {
+                this.showLoading();
+                this.updateConnectionStatus('Connecting...');
+
+                try {
+                    console.log('Initializing WebSocket connection...');
+                    this.ws = new WebSocket('ws://localhost:8080');
+
+                    this.ws.onopen = () => {
+                        console.log('WebSocket connected successfully');
+                        this.hideLoading();
+                        this.updateConnectionStatus('Connected', true);
+                        this.sendInitMessage();
+                        this.loadContacts();
+                    };
+
+                    this.ws.onmessage = (event) => {
+                        const data = JSON.parse(event.data);
+                        console.log('WebSocket message received:', data);
+                        this.handleIncomingMessage(data);
+                    };
+
+                    this.ws.onclose = () => {
+                        console.log('WebSocket connection closed');
+                        this.showLoading();
+                        this.updateConnectionStatus('Disconnected. Reconnecting...', false);
+                        this.elements.chatInput.disabled = true;
+                        this.elements.sendButton.disabled = true;
+                        setTimeout(() => this.initializeWebSocket(), 3000);
+                    };
+
+                    this.ws.onerror = (error) => {
+                        console.error('WebSocket error:', error);
+                        this.showLoading();
+                        this.updateConnectionStatus('Connection error', false);
+                    };
+                } catch (error) {
+                    console.error('WebSocket initialization error:', error);
+                    this.updateConnectionStatus('Failed to connect', false);
+                }
+            }
+
+            updateConnectionStatus(status, connected = false) {
+                console.log('Updating connection status:', status, connected);
+                this.elements.connectionStatus.className = 'connection-status ' + (connected ? 'connected' : 'disconnected');
+                this.elements.statusText.textContent = status;
+            }
+
+            showLoading() {
+                this.elements.loading.classList.add('active');
+            }
+
+            hideLoading() {
+                this.elements.loading.classList.remove('active');
+            }
+
+            sendInitMessage() {
+                console.log('Sending initialization message');
+                this.sendWebSocketMessage({
+                    type: 'init',
+                    user_id: this.userId,
+                    event_id: this.eventId
+                });
+            }
+
+            async loadContacts() {
+                try {
+                    const url = `chat-api.php?action=get_participants&event_id=${this.eventId}`;
+                    console.log('Fetching contacts from:', url);
+
+                    const response = await fetch(url);
+                    console.log('Contact fetch response status:', response.status);
+                    console.log('Response headers:', Object.fromEntries(response.headers));
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status} ${response.statusText}`);
+                    }
+
+                    const rawData = await response.text();
+                    console.log('Raw contact data received:', rawData);
+
+                    let data;
+                    try {
+                        data = JSON.parse(rawData);
+                    } catch (parseError) {
+                        console.error('JSON parsing error:', parseError);
+                        console.log('Invalid JSON received:', rawData);
+                        throw new Error('Invalid JSON response from server');
+                    }
+
+                    console.log('Parsed contact data:', data);
+
+                    if (!data.success) {
+                        throw new Error(data.error || 'Server indicated failure');
+                    }
+
+                    if (!Array.isArray(data.participants)) {
+                        console.error('Invalid participants data:', data.participants);
+                        throw new Error('Server returned invalid participants format');
+                    }
+
+                    const contacts = data.participants;
+                    console.log('Processing contacts:', contacts);
+
+                    this.elements.contactsContainer.innerHTML = contacts.map(contact => {
+                        if (!contact.id || !contact.name) {
+                            console.warn('Invalid contact data:', contact);
+                            return '';
+                        }
+                        return `
+                    <div class="contact ${contact.status?.toLowerCase() === 'online' ? 'online' : ''}" 
+                         data-user-id="${this.escapeHtml(contact.id)}">
+                        <img src="${contact.profile_image || '/api/placeholder/40/40'}" alt="${this.escapeHtml(contact.name)}">
+                        <div class="contact-info">
+                            <div class="contact-name">${this.escapeHtml(contact.name)}</div>
+                            <div class="contact-status">${this.escapeHtml(contact.status || 'Offline')}</div>
+                        </div>
+                    </div>
+                `;
+                    }).join('');
+
+                    this.elements.participantCount.textContent = `${contacts.length} participants`;
+
+                    const contactElements = this.elements.contactsContainer.querySelectorAll('.contact');
+                    console.log('Adding click listeners to', contactElements.length, 'contacts');
+
+                    contactElements.forEach(contact => {
+                        contact.addEventListener('click', () => this.selectContact(contact));
+                    });
+
+                } catch (error) {
+                    console.error('Contact loading error:', error);
+                    console.error('Error stack:', error.stack);
+
+                    this.elements.contactsContainer.innerHTML = `
+                <div class="error-message">
+                    Failed to load contacts: ${this.escapeHtml(error.message)}
+                    <br>
+                    <small>Please check the console for more details.</small>
+                </div>
+            `;
+                }
+            }
+
+            async loadChatHistory(contactId) {
+                try {
+                    console.log('Loading chat history for contact:', contactId);
+                    const url = `chat-api.php?action=get_history&event_id=${this.eventId}`;
+                    const response = await fetch(url);
+
+                    console.log('Chat history response:', response);
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+
+                    const rawData = await response.text();
+                    console.log('Raw chat history:', rawData);
+
+                    let data;
+                    try {
+                        data = JSON.parse(rawData);
+                    } catch (parseError) {
+                        console.error('JSON parsing error:', parseError);
+                        throw new Error('Invalid JSON response from server');
+                    }
+
+                    console.log('Parsed chat history:', data);
+
+                    if (data.success) {
+                        this.elements.messagesContainer.innerHTML = '';
+                        data.messages.forEach(msg => this.appendMessage({
+                            sender_id: msg.sender_id,
+                            message: msg.message,
+                            time: msg.sent_at,
+                            sender_name: msg.sender_name
+                        }));
+                        this.scrollToBottom();
+                    } else {
+                        throw new Error(data.error || 'Failed to load chat history');
+                    }
+                } catch (error) {
+                    console.error('Chat history loading error:', error);
+                    this.elements.messagesContainer.innerHTML = `
+                <div class="error-message">Failed to load chat history: ${this.escapeHtml(error.message)}</div>
+            `;
+                }
+            }
+
+            selectContact(contactElement) {
+                console.log('Selecting contact:', contactElement);
+
+                this.elements.contactsContainer.querySelectorAll('.contact')
+                    .forEach(el => el.classList.remove('active'));
+
+                contactElement.classList.add('active');
+
+                this.currentContact = contactElement.dataset.userId;
+                const contactName = contactElement.querySelector('.contact-name').textContent;
+                this.elements.currentContactName.textContent = contactName;
+
+                const isConnected = this.ws && this.ws.readyState === WebSocket.OPEN;
+                this.elements.chatInput.disabled = !isConnected;
+                this.elements.sendButton.disabled = !isConnected;
+
+                const badge = contactElement.querySelector('.unread-badge');
+                if (badge) {
+                    badge.remove();
+                }
+
+                if (isConnected) {
+                    this.elements.chatInput.placeholder = `Message ${contactName}...`;
+                    this.elements.chatInput.focus();
+                }
+
+                this.loadChatHistory(this.currentContact);
+            }
+
+            initializeEventListeners() {
+                this.elements.sendButton.addEventListener('click', () => this.sendChatMessage());
+
+                this.elements.chatInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        this.sendChatMessage();
+                    }
+                });
+
+                this.elements.searchInput.addEventListener('input', (e) => {
+                    const searchTerm = e.target.value.toLowerCase();
+                    this.elements.contactsContainer.querySelectorAll('.contact').forEach(contact => {
+                        const name = contact.querySelector('.contact-name').textContent.toLowerCase();
+                        contact.style.display = name.includes(searchTerm) ? 'flex' : 'none';
+                    });
+                });
+
+                setInterval(() => {
+                    if (this.userId) {
+                        fetch(`chat-api.php?action=update_activity&user_id=${this.userId}`)
+                            .catch(error => console.error('Activity update error:', error));
+                    }
+                }, 30000);
+
+                document.querySelector('.toggle-btn')?.addEventListener('click', () => {
+                    document.querySelector('.sidebar')?.classList.toggle('collapse');
+                    document.querySelector('.main-content')?.classList.toggle('expand');
+                });
+            }
+
+            sendChatMessage() {
+                const message = this.elements.chatInput.value.trim();
+                if (!message || !this.currentContact || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
+                    console.log('Cannot send message:', {
+                        hasMessage: !!message,
+                        hasContact: !!this.currentContact,
+                        wsState: this.ws ? this.ws.readyState : 'no websocket'
+                    });
+                    return;
+                }
+
+                console.log('Sending chat message:', message);
+                this.sendWebSocketMessage({
+                    type: 'chat',
+                    message: message,
+                    recipient_id: this.currentContact,
+                    timestamp: new Date().toISOString()
+                });
+
+                this.elements.chatInput.value = '';
+            }
+
+            sendWebSocketMessage(data) {
+                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                    console.log('Sending WebSocket message:', data);
+                    this.ws.send(JSON.stringify(data));
+                } else {
+                    console.error('WebSocket is not connected');
+                }
+            }
+
+            handleIncomingMessage(data) {
+                console.log('Processing incoming message:', data);
+
+                switch (data.type) {
+                    case 'message':
+                        if (data.sender_id === this.currentContact || data.sender_id === this.userId) {
+                            this.appendMessage({
+                                sender_id: data.sender_id,
+                                message: data.message,
+                                time: data.timestamp,
+                                sender_name: data.sender_name
+                            });
+                        }
+                        this.updateUnreadCount(data.sender_id);
+                        break;
+
+                    case 'status':
+                        this.updateUserStatus(data);
+                        break;
+
+                    case 'error':
+                        console.error('Server error:', data.message);
+                        break;
+
+                    default:
+                        console.log('Unknown message type:', data.type);
+                }
+            }
+
+            updateUnreadCount(senderId) {
+                if (senderId !== this.currentContact) {
+                    const contactElement = this.elements.contactsContainer
+                        .querySelector(`[data-user-id="${senderId}"]`);
+
+                    if (contactElement) {
+                        let badge = contactElement.querySelector('.unread-badge');
+                        if (!badge) {
+                            badge = document.createElement('div');
+                            badge.className = 'notification-badge unread-badge';
+                            contactElement.appendChild(badge);
+                        }
+                        const currentCount = parseInt(badge.textContent || '0');
+                        badge.textContent = (currentCount + 1).toString();
+                    }
+                }
+            }
+
+            appendMessage({ sender_id, message, time, sender_name }) {
+                const messageType = sender_id === this.userId ? 'sent' : 'received';
+                const formattedTime = new Date(time).toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+
+                const messageHTML = `
+            <div class="message ${messageType}">
+                <div class="message-content">
+                    ${messageType === 'received' ? `<div class="sender-name">${this.escapeHtml(sender_name)}</div>` : ''}
+                    ${this.escapeHtml(message)}
+                </div>
+                <div class="message-time">${formattedTime}</div>
+            </div>
+        `;
+
+                this.elements.messagesContainer.insertAdjacentHTML('beforeend', messageHTML);
+                this.scrollToBottom();
+            }
+
+            updateUserStatus(data) {
+                console.log('Updating user status:', data);
+                const contactElement = this.elements.contactsContainer
+                    .querySelector(`[data-user-id="${data.user_id}"]`);
+
+                if (contactElement) {
+                    const statusElement = contactElement.querySelector('.contact-status');
+                    statusElement.textContent = data.status;
+                    contactElement.classList.toggle('online', data.status.toLowerCase() === 'online');
+                }
+            }
+
+            scrollToBottom() {
+                this.elements.messagesContainer.scrollTop = this.elements.messagesContainer.scrollHeight;
+            }
+
+            escapeHtml(unsafe) {
+                return unsafe
+                    .replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;")
+                    .replace(/"/g, "&quot;")
+                    .replace(/'/g, "&#039;");
+            }
+        }
+
+        // Initialize chat system when DOM is loaded
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('Initializing ChatSystem...');
+            const chatSystem = new ChatSystem();
+        });
+    </script>
+</body>
+
+</html>

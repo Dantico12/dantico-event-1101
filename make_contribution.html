@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Make Contribution - Event Management Dashboard</title>
+    <link href='https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css' rel='stylesheet'>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'poppins', sans-serif;
+        }
+
+        :root {
+            --sidebar-width: 260px;
+            --collapsed-width: 60px;
+            --header-height: 60px;
+        }
+
+        body {
+            min-height: 100vh;
+            background: #081b29;
+            overflow-x: hidden;
+        }
+
+        /* Sidebar Styles */
+        .sidebar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            height: 100%;
+            width: var(--sidebar-width);
+            background: rgba(8, 27, 41, 0.9);
+            border-right: 2px solid #0ef;
+            transition: all 0.5s ease;
+            z-index: 100;
+            overflow-y: auto;
+        }
+
+        .sidebar.collapse {
+            width: var(--collapsed-width);
+        }
+
+        .sidebar-header {
+            height: var(--header-height);
+            display: flex;
+            align-items: center;
+            padding: 0 15px;
+            border-bottom: 2px solid #0ef;
+        }
+
+        .sidebar-header h2 {
+            color: #fff;
+            font-size: 20px;
+            margin-left: 15px;
+            white-space: nowrap;
+            transition: all 0.5s ease;
+        }
+
+        .sidebar.collapse .sidebar-header h2 {
+            opacity: 0;
+        }
+
+        .sidebar-menu {
+            padding: 10px 0;
+        }
+
+        .menu-category {
+            margin: 10px 0;
+        }
+
+        .category-title {
+            color: #0ef;
+            font-size: 12px;
+            text-transform: uppercase;
+            padding: 10px 20px;
+            letter-spacing: 1px;
+            opacity: 0.7;
+        }
+
+        .sidebar.collapse .category-title {
+            opacity: 0;
+        }
+
+        .menu-item {
+            padding: 12px 20px 12px 30px;
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .menu-item:hover {
+            background: rgba(0, 238, 255, 0.1);
+        }
+
+        .menu-item.active {
+            background: rgba(0, 238, 255, 0.15);
+        }
+
+        .menu-item i {
+            font-size: 24px;
+            min-width: 40px;
+            color: #0ef;
+            transition: all 0.3s ease;
+        }
+
+        .menu-item span {
+            color: #fff;
+            white-space: nowrap;
+            transition: all 0.3s ease;
+            margin-left: 10px;
+        }
+
+        .menu-item a {
+            text-decoration: none;
+            color: inherit;
+            display: flex;
+            align-items: center;
+            width: 100%;
+        }
+
+        .sidebar.collapse .menu-item span {
+            opacity: 0;
+        }
+
+        /* Main Content Styles */
+        .main-content {
+            position: relative;
+            left: var(--sidebar-width);
+            width: calc(100% - var(--sidebar-width));
+            min-height: 100vh;
+            transition: all 0.5s ease;
+            padding: 20px;
+        }
+
+        .main-content.expand {
+            left: var(--collapsed-width);
+            width: calc(100% - var(--collapsed-width));
+        }
+
+        .header {
+            height: var(--header-height);
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            background: rgba(8, 27, 41, 0.9);
+            border: 2px solid #0ef;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+
+        .toggle-btn {
+            font-size: 24px;
+            color: #0ef;
+            cursor: pointer;
+            background: none;
+            border: none;
+            outline: none;
+        }
+
+        .header-title {
+            color: #fff;
+            margin-left: 20px;
+            font-size: 20px;
+        }
+
+        .header-actions {
+            margin-left: auto;
+            display: flex;
+            gap: 15px;
+        }
+
+        .header-actions i {
+            font-size: 24px;
+            color: #0ef;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        /* Enhanced Form Styles */
+        .form-container {
+            background-color: #081b29;
+            padding: 30px;
+            border-radius: 10px;
+            border: 2px solid #0ef;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .success-message {
+            background: rgba(0, 238, 255, 0.1);
+            border: 1px solid #0ef;
+            color: #fff;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            display: none;
+        }
+
+        .success-message.show {
+            display: flex;
+        }
+
+        .form-title {
+            color: #fff;
+            margin-bottom: 25px;
+            font-size: 24px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .form-title i {
+            color: #0ef;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 25px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            color: #fff;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        .form-group label i {
+            color: #0ef;
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #0ef;
+            background-color: rgba(0, 238, 255, 0.05);
+            color: #fff;
+            border-radius: 5px;
+            transition: all 0.3s ease;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            box-shadow: 0 0 10px rgba(0, 238, 255, 0.3);
+        }
+
+        .form-group select option {
+            background-color: #081b29;
+            color: #fff;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 15px;
+            justify-content: flex-end;
+            margin-top: 30px;
+        }
+
+        .submit-btn,
+        .reset-btn {
+            padding: 12px 25px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .submit-btn {
+            background: #0ef;
+            color: #081b29;
+            border: none;
+        }
+
+        .reset-btn {
+            background: transparent;
+            color: #fff;
+            border: 2px solid #0ef;
+        }
+
+        .submit-btn:hover {
+            background: #fff;
+        }
+
+        .reset-btn:hover {
+            background: rgba(0, 238, 255, 0.1);
+        }
+
+        /* Responsive Styles */
+        @media (max-width: 768px) {
+            .form-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .button-group {
+                flex-direction: column;
+            }
+            
+            .submit-btn,
+            .reset-btn {
+                width: 100%;
+                justify-content: center;
+            }
+
+            .main-content {
+                left: var(--collapsed-width);
+                width: calc(100% - var(--collapsed-width));
+            }
+
+            .sidebar {
+                width: var(--collapsed-width);
+            }
+
+            .sidebar-header h2,
+            .category-title,
+            .menu-item span {
+                opacity: 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Sidebar -->
+    <nav class="sidebar">
+        <div class="sidebar-header">
+            <i class='bx bx-calendar-event' style="color: #0ef; font-size: 24px;"></i>
+            <h2>Dantico Events</h2>
+        </div>
+        <div class="sidebar-menu">
+            <!-- Dashboard -->
+            <div class="menu-category">
+                <div class="menu-item">
+                    <a href="./dashboard.html">
+                        <i class='bx bx-home-alt'></i>
+                        <span>Dashboard</span>
+                    </a>
+                </div>
+            </div>
+
+            <!-- Committees Section -->
+            <div class="menu-category">
+                <div class="category-title">Committees</div>
+                <div class="menu-item">
+                    <a href="./add-committee.html">
+                        <i class='bx bx-plus-circle'></i>
+                        <span>Add Committee</span>
+                    </a>
+                </div>
+                <div class="menu-item">
+                    <a href="./committee-list.html">
+                        <i class='bx bx-group'></i>
+                        <span>Committee List</span>
+                    </a>
+                </div>
+            </div>
+
+            <!-- Communication Section -->
+            <div class="menu-category">
+                <div class="category-title">Communication</div>
+                <div class="menu-item">
+                    <a href="./chat.html">
+                        <i class='bx bx-message-rounded-dots'></i>
+                        <span>Chat System</span>
+                    </a>
+                </div>
+                <div class="menu-item">
+                    <a href="./video-conference.html">
+                        <i class='bx bx-video'></i>
+                        <span>Video Conference</span>
+                    </a>
+                </div>
+            </div>
+
+            <!-- Contributions Section -->
+            <div class="menu-category">
+                <div class="category-title">Contributions</div>
+                <div class="menu-item active">
+                    <a href="./make_contribution.html">
+                        <i class='bx bx-plus-circle'></i>
+                        <span>Make Contribution</span>
+                    </a>
+                </div>
+                <div class="menu-item">
+                    <a href="./contributions.html">
+                        <i class='bx bx-money'></i>
+                        <span>Contributions</span>
+                    </a>
+                </div>
+            </div>
+
+            <!-- Reviews Section -->
+            <div class="menu-category">
+                <div class="category-title">Reviews</div>
+                <div class="menu-item">
+                    <a href="./minutes.html">
+                        <i class='bx bxs-timer'></i>
+                        <span>Minutes</span>
+                    </a>
+                </div>
+                <div class="menu-item">
+                    <a href="./tasks.html">
+                        <i class='bx bx-task'></i>
+                        <span>Tasks</span>
+                    </a>
+                </div>
+            </div>
+
+            <div class="menu-item">
+                <a href="./reports.html">
+                    <i class='bx bx-line-chart'></i>
+                    <span>Reports</span>
+                </a>
+            </div>
+
+            <!-- Other Tools -->
+            <div class="menu-category">
+                <div class="category-title">Tools</div>
+                <div class="menu-item">
+                    <a href="./schedule.html">
+                        <i class='bx bx-calendar'></i>
+                        <span>Schedule</span>
+                    </a>
+                </div>
+                <div class="menu-item">
+                    <a href="./settings.html">
+                        <i class='bx bx-cog'></i>
+                        <span>Settings</span>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="main-content">
+        <div class="header">
+            <button class="toggle-btn">
+                <i class='bx bx-menu'></i>
+            </button>
+            <h2 class="header-title">Make Contribution</h2>
+            <div class="header-actions">
+                <i class='bx bx-search'></i>
+                <i class='bx bx-bell'></i>
+                <i class='bx bx-user-circle'></i>
+            </div>
+        </div>
+
+        <!-- Enhanced Contribution Form -->
+        <div class="form-container">
+            <div class="success-message">
+                <i class='bx bx-check-circle' style="color: #0ef; font-size: 20px;"></i>
+                Contribution submitted successfully! Thank you for your support.
+            </div>
+            
+            <h3 class="form-title">
+                <i class='bx bx-money'></i>
+                Make a Contribution
+            </h3>
+            
+            <form id="contributionForm">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>
+                            <i class='bx bx-phone'></i>
+                            Phone Number
+                        </label>
+                        <input type="tel" placeholder="Enter your phone number" required pattern="[0-9]{10}" title="Please enter a valid 10-digit phone number">
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <i class='bx bx-dollar'></i>
+                            Contribution Amount
+                        </label>
+                        <input type="number" placeholder="Enter amount" required min="1">
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <i class='bx bx-credit-card'></i>
+                            Payment Method
+                        </label>
+                        <select required>
+                            <option value="">Select payment method</option>
+                            <option value="mobile_money">Mobile Money</option>
+                            <option value="bank_transfer">Bank Transfer</option
+                                <option value="card">Credit/Debit Card</option>
+                            <option value="cash">Cash</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <i class='bx bx-purchase-tag'></i>
+                            Purpose
+                        </label>
+                        <select required>
+                            <option value="">Select purpose</option>
+                            <option value="membership">Membership Dues</option>
+                            <option value="event">Event Fee</option>
+                            <option value="donation">Donation</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>
+                        <i class='bx bx-message-detail'></i>
+                        Additional Notes
+                    </label>
+                    <textarea rows="3" placeholder="Any additional information (optional)"></textarea>
+                </div>
+
+                <div class="button-group">
+                    <button type="reset" class="reset-btn">
+                        <i class='bx bx-reset'></i>
+                        Reset
+                    </button>
+                    <button type="submit" class="submit-btn">
+                        <i class='bx bx-check'></i>
+                        Submit Contribution
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // Toggle sidebar functionality
+        const toggleBtn = document.querySelector('.toggle-btn');
+        const sidebar = document.querySelector('.sidebar');
+        const mainContent = document.querySelector('.main-content');
+
+        toggleBtn.addEventListener('click', () => {
+            sidebar.classList.toggle('collapse');
+            mainContent.classList.toggle('expand');
+        });
+
+        // Handle menu item clicks
+        const menuItems = document.querySelectorAll('.menu-item');
+        menuItems.forEach(item => {
+            item.addEventListener('click', () => {
+                // Remove active class from all items
+                menuItems.forEach(i => i.classList.remove('active'));
+                // Add active class to clicked item
+                item.classList.add('active');
+            });
+        });
+
+        // Form submission handling
+        document.getElementById('contributionForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            // Show success message
+            const successMessage = document.querySelector('.success-message');
+            successMessage.classList.add('show');
+            
+            // Hide success message after 3 seconds
+            setTimeout(() => {
+                successMessage.classList.remove('show');
+                this.reset();
+            }, 3000);
+        });
+
+        // Add hover effect to header action icons
+        const headerActions = document.querySelectorAll('.header-actions i');
+        headerActions.forEach(icon => {
+            icon.addEventListener('mouseenter', () => {
+                icon.style.transform = 'scale(1.1)';
+            });
+            icon.addEventListener('mouseleave', () => {
+                icon.style.transform = 'scale(1)';
+            });
+        });
+
+        // Add active state to current page in sidebar
+        document.addEventListener('DOMContentLoaded', () => {
+            const currentPath = window.location.pathname;
+            const menuLinks = document.querySelectorAll('.menu-item a');
+            
+            menuLinks.forEach(link => {
+                if (link.getAttribute('href') === `.${currentPath}`) {
+                    link.parentElement.classList.add('active');
+                }
+            });
+        });
+    </script>
+</body>
+</html>
