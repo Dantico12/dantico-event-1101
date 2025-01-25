@@ -1,30 +1,24 @@
 <?php
-$servername = "127.0.0.1"; // Use IP instead of localhost
+$servername = "localhost";
 $username = "root";
 $password = "";
 $dbname = "event";
-$port = 3306; // Add explicit port number
 
 try {
-    // Create connection with explicit port and socket settings
-    $conn = mysqli_init();
+    $conn = new mysqli($servername, $username, $password, $dbname);
     
-    if (!$conn) {
-        throw new Exception("mysqli_init failed");
+    if ($conn->connect_error) {
+        throw new Exception("Connection failed: " . $conn->connect_error);
     }
     
-    // Set timeout options
-    mysqli_options($conn, MYSQLI_OPT_CONNECT_TIMEOUT, 10);
-    
-    // Connect with explicit parameters
-    if (!mysqli_real_connect($conn, $servername, $username, $password, $dbname, $port)) {
-        throw new Exception("Connect Error: " . mysqli_connect_error());
-    }
-    
-    // Set charset
     $conn->set_charset("utf8mb4");
     
 } catch (Exception $e) {
-    die("Connection failed: " . $e->getMessage());
+    error_log("Database connection error: " . $e->getMessage());
+    http_response_code(500);
+    echo json_encode([
+        'success' => false,
+        'error' => 'Database connection failed'
+    ]);
+    exit;
 }
-?>

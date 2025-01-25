@@ -1,3 +1,21 @@
+<?php
+
+session_start();
+
+// Function to generate base URL with event context
+function getEventContextURL() {
+    $base_url = '';
+    if (isset($_SESSION['current_event_id']) && isset($_SESSION['current_event_code'])) {
+        $base_url = '?event_id=' . urlencode($_SESSION['current_event_id']) . 
+                    '&event_code=' . urlencode($_SESSION['current_event_code']);
+    }
+    return $base_url;
+}
+
+// Get the event context URL to be used across navigation
+$base_url = getEventContextURL();
+?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -354,8 +372,7 @@
     </style>
 </head>
 <body>
-   <!-- Sidebar -->
-   <nav class="sidebar">
+<nav class="sidebar">
     <div class="sidebar-header">
         <i class='bx bx-calendar-event' style="color: #0ef; font-size: 24px;"></i>
         <h2>Dantico Events</h2>
@@ -363,8 +380,8 @@
     <div class="sidebar-menu">
         <!-- Dashboard -->
         <div class="menu-category">
-            <div class="menu-item">
-                <a href="./dashboard.html">
+            <div class="menu-item active">
+                <a href="./dashboard.php<?= $base_url ?>">
                     <i class='bx bx-home-alt'></i>
                     <span>Dashboard</span>
                 </a>
@@ -374,14 +391,14 @@
         <!-- Committees Section -->
         <div class="menu-category">
             <div class="category-title">Committees</div>
-            <div class="menu-item active">
-                <a href="./add-committee.html">
+            <div class="menu-item">
+                <a href="./add-committee.php<?= $base_url ?>">
                     <i class='bx bx-plus-circle'></i>
                     <span>Add Committee</span>
                 </a>
             </div>
             <div class="menu-item">
-                <a href="./committee-list.html">
+                <a href="./committee-list.php<?= $base_url ?>">
                     <i class='bx bx-group'></i>
                     <span>Committee List</span>
                 </a>
@@ -392,13 +409,14 @@
         <div class="menu-category">
             <div class="category-title">Communication</div>
             <div class="menu-item">
-                <a href="./chat.html">
+                <a href="./chat.php<?= $base_url ?>">
                     <i class='bx bx-message-rounded-dots'></i>
                     <span>Chat System</span>
+                    <div class="notification-badge">3</div>
                 </a>
             </div>
             <div class="menu-item">
-                <a href="./video-conference.html">
+                <a href="./video-conference.php<?= $base_url ?>">
                     <i class='bx bx-video'></i>
                     <span>Video Conference</span>
                 </a>
@@ -409,13 +427,13 @@
         <div class="menu-category">
             <div class="category-title">Contributions</div>
             <div class="menu-item">
-                <a href="./make_contribution.html">
+                <a href="./make_contribution.php<?= $base_url ?>">
                     <i class='bx bx-plus-circle'></i>
-                    <span>Make Contribution</span>
+                    <span>Make Contributions</span>
                 </a>
             </div>
             <div class="menu-item">
-                <a href="./contributions.html">
+                <a href="./contributions.php<?= $base_url ?>">
                     <i class='bx bx-money'></i>
                     <span>Contributions</span>
                 </a>
@@ -426,39 +444,36 @@
         <div class="menu-category">
             <div class="category-title">Reviews</div>
             <div class="menu-item">
-                <a href="./minutes.html">
+                <a href="./minutes.php<?= $base_url ?>">
                     <i class='bx bxs-timer'></i>
                     <span>Minutes</span>
                 </a>
             </div>
             <div class="menu-item">
-                <a href="./tasks.html">
-                    <i class='bx bx-task' ></i>
+                <a href="./tasks.php<?= $base_url ?>">
+                    <i class='bx bx-task'></i>
                     <span>Tasks</span>
                 </a>
             </div>
-        </div>
-
             <div class="menu-item">
-                <a href="./reports.html">
+                <a href="./reports.php<?= $base_url ?>">
                     <i class='bx bx-line-chart'></i>
                     <span>Reports</span>
                 </a>
             </div>
         </div>
 
-
         <!-- Other Tools -->
         <div class="menu-category">
             <div class="category-title">Tools</div>
             <div class="menu-item">
-                <a href="./schedule.html">
+                <a href="./schedule.php<?= $base_url ?>">
                     <i class='bx bx-calendar'></i>
                     <span>Schedule</span>
                 </a>
             </div>
             <div class="menu-item">
-                <a href="./settings.html">
+                <a href="./settings.php<?= $base_url ?>">
                     <i class='bx bx-cog'></i>
                     <span>Settings</span>
                 </a>
@@ -466,7 +481,6 @@
         </div>
     </div>
 </nav>
-
       <!-- Main Content -->
       <div class="main-content">
         <div class="header">

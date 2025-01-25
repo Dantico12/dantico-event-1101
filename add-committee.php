@@ -1,3 +1,7 @@
+
+
+
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -300,7 +304,7 @@
             <!-- Dashboard -->
             <div class="menu-category">
                 <div class="menu-item">
-                    <a href="./dashboard.html">
+                    <a href="./dashboard.php">
                         <i class='bx bx-home-alt'></i>
                         <span>Dashboard</span>
                     </a>

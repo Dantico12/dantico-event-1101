@@ -50,7 +50,6 @@ class ChatServer implements MessageComponentInterface {
         $this->clients->attach($conn);
         echo "New connection! ({$conn->resourceId})\n";
         
-        // Send connection confirmation
         $conn->send(json_encode([
             'type' => 'connection_status',
             'status' => 'connected',
@@ -69,15 +68,16 @@ class ChatServer implements MessageComponentInterface {
                 case 'init':
                     $this->userConnections[$from->resourceId] = [
                         'user_id' => (int)$data['user_id'],
-                        'event_id' => (int)$data['event_id']
+                        'event_id' => (int)$data['event_id'],
+                        'username' => $data['username'] ?? 'Anonymous'
                     ];
                     
-                    // Send initialization confirmation
                     $from->send(json_encode([
                         'type' => 'init_confirmation',
                         'status' => 'success',
                         'user_id' => $data['user_id'],
-                        'event_id' => $data['event_id']
+                        'event_id' => $data['event_id'],
+                        'username' => $this->userConnections[$from->resourceId]['username']
                     ]));
                     
                     echo "User {$data['user_id']} initialized for event {$data['event_id']}\n";
@@ -89,15 +89,38 @@ class ChatServer implements MessageComponentInterface {
                     }
 
                     $stmt = $this->db->prepare(
-                        "INSERT INTO chat_messages (event_id, sender_id, message, created_at) 
-                         VALUES (?, ?, ?, NOW())"
+                        "INSERT INTO messages (
+                            event_id, 
+                            sender_id, 
+                            message, 
+                            sent_at, 
+                            message_type, 
+                            attachment_url, 
+                            read_status, 
+                            client_message_id
+                        ) VALUES (?, ?, ?, NOW(), ?, ?, ?, ?)"
                     );
                     
                     $eventId = $this->userConnections[$from->resourceId]['event_id'];
                     $senderId = $this->userConnections[$from->resourceId]['user_id'];
                     $message = $data['message'];
                     
-                    $stmt->bind_param("iis", $eventId, $senderId, $message);
+                    // Default message type and additional fields
+                    $messageType = $data['message_type'] ?? 'text';
+                    $attachmentUrl = $data['attachment_url'] ?? null;
+                    $readStatus = 'unread';
+                    $clientMessageId = $data['client_message_id'] ?? null;
+                    
+                    $stmt->bind_param(
+                        "iissssss", 
+                        $eventId, 
+                        $senderId, 
+                        $message, 
+                        $messageType, 
+                        $attachmentUrl, 
+                        $readStatus, 
+                        $clientMessageId
+                    );
                     
                     if (!$stmt->execute()) {
                         throw new Exception('Failed to save message: ' . $stmt->error);
@@ -115,8 +138,12 @@ class ChatServer implements MessageComponentInterface {
                                 'type' => 'message',
                                 'id' => $messageId,
                                 'sender_id' => $senderId,
+                                'username' => $this->userConnections[$from->resourceId]['username'],
                                 'message' => $message,
-                                'timestamp' => $timestamp
+                                'message_type' => $messageType,
+                                'attachment_url' => $attachmentUrl,
+                                'timestamp' => $timestamp,
+                                'client_message_id' => $clientMessageId
                             ]));
                         }
                     }

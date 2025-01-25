@@ -1,38 +1,46 @@
 <?php
+// Start the session at the beginning of each page
 session_start();
-
-// Debug function
-function debug_to_console($data) {
-    $output = $data;
-    if (is_array($output))
-        $output = implode(',', $output);
-
-    echo "<script>console.log('Debug: " . $output . "' );</script>";
-}
 
 // Include database connection
 require 'db.php';
 
-// Check if user is logged in
-if (!isset($_SESSION['user_id'])) {
+// Check if user is logged in, with more robust session validation
+if (!isset($_SESSION['user_id']) || empty($_SESSION['user_id'])) {
+    // Clear any existing session data
+    session_unset();
+    session_destroy();
+    
+    // Redirect to login page
     header('Location: login.php');
     exit();
 }
 
-// Debug incoming parameters
-debug_to_console("GET parameters: " . print_r($_GET, true));
-debug_to_console("SESSION data: " . print_r($_SESSION, true));
+// At the start, handle event selection and session management
+if (isset($_GET['event_id']) && isset($_GET['event_code'])) {
+    // Sanitize and store current event details in session
+    $_SESSION['current_event_id'] = intval($_GET['event_id']);
+    $_SESSION['current_event_code'] = htmlspecialchars($_GET['event_code']);
+}
 
-// Get event details from URL parameters
-$event_id = isset($_GET['event_id']) ? intval($_GET['event_id']) : null;
-$event_code = isset($_GET['event_code']) ? $_GET['event_code'] : null;
+// Retrieve the current event details from session
+$event_id = $_SESSION['current_event_id'] ?? null;
+$event_code = $_SESSION['current_event_code'] ?? null;
 
-debug_to_console("Event ID: " . $event_id);
-debug_to_console("Event Code: " . $event_code);
+// User ID from session
+$user_id = $_SESSION['user_id'];
+
+// Update user's online status and last_active when entering dashboard
+$update_stmt = $conn->prepare("UPDATE users SET 
+    last_login = NOW(), 
+    last_active = NOW(), 
+    online_status = 'online' 
+    WHERE id = ?");
+$update_stmt->bind_param("i", $user_id);
+$update_stmt->execute();
+$update_stmt->close();
 
 try {
-    $user_id = $_SESSION['user_id'];
-    
     // First, check if the user is a member of any events
     $member_events_sql = "SELECT e.* FROM events e 
                          JOIN event_members em ON e.id = em.event_id 
@@ -45,7 +53,7 @@ try {
     $result = $stmt->get_result();
     $events = $result->fetch_all(MYSQLI_ASSOC);
     
-    // If specific event requested
+    // If specific event requested or stored in session
     if ($event_id) {
         // Check if user has access to this specific event
         $access_sql = "SELECT e.* FROM events e 
@@ -58,47 +66,53 @@ try {
         $access_stmt->execute();
         $event = $access_stmt->get_result()->fetch_assoc();
         
-        if (!$event) {
-            // Try to fetch event just by ID as fallback
-            $fallback_sql = "SELECT * FROM events WHERE id = ? AND status = 'active'";
-            $fallback_stmt = $conn->prepare($fallback_sql);
-            $fallback_stmt->bind_param("i", $event_id);
-            $fallback_stmt->execute();
-            $event = $fallback_stmt->get_result()->fetch_assoc();
+        if (!$event && !empty($events)) {
+            // If no specific event access, default to first event
+            $event = $events[0];
             
-            if ($event) {
-                // Check if user should be added as a member
-                $check_member_sql = "SELECT * FROM event_members WHERE event_id = ? AND user_id = ?";
-                $check_stmt = $conn->prepare($check_member_sql);
-                $check_stmt->bind_param("ii", $event['id'], $user_id);
-                $check_stmt->execute();
-                
-                if ($check_stmt->get_result()->num_rows === 0) {
-                    // Add user as a member
-                    $add_member_sql = "INSERT INTO event_members (event_id, user_id, role, joined_via_link) 
-                                     VALUES (?, ?, 'member', 1)";
-                    $add_stmt = $conn->prepare($add_member_sql);
-                    $add_stmt->bind_param("ii", $event['id'], $user_id);
-                    $add_stmt->execute();
-                }
-            }
+            // Update session with default event
+            $_SESSION['current_event_id'] = $event['id'];
+            $_SESSION['current_event_code'] = $event['event_code'];
         }
     } else if (!empty($events)) {
         // Default to most recent event the user is a member of
         $event = $events[0];
+        
+        // Update session with default event
+        $_SESSION['current_event_id'] = $event['id'];
+        $_SESSION['current_event_code'] = $event['event_code'];
     }
     
     if (!$event && empty($events)) {
         $error_message = "No events found. Please create or join an event.";
-        debug_to_console("Error: " . $error_message);
     }
     
 } catch (Exception $e) {
-    debug_to_console("Error: " . $e->getMessage());
     error_log($e->getMessage());
     $error_message = "An error occurred while fetching event data. Please try again later.";
 }
+
+// Session security: Regenerate session ID periodically to prevent session fixation
+if (!isset($_SESSION['last_regeneration']) || time() - $_SESSION['last_regeneration'] > 300) {
+    session_regenerate_id(true);
+    $_SESSION['last_regeneration'] = time();
+}
+
+// Timeout check
+$session_timeout = 1800; // 30 minutes
+if (isset($_SESSION['last_activity']) && (time() - $_SESSION['last_activity']) > $session_timeout) {
+    // Destroy the session and redirect to login
+    session_unset();
+    session_destroy();
+    header('Location: login.php?timeout=1');
+    exit();
+}
+
+// Update last activity time
+$_SESSION['last_activity'] = time();
 ?>
+
+<!-- Rest of your existing HTML remains the same -->
 
 <!DOCTYPE html>
 <html lang="en">
@@ -319,119 +333,134 @@ try {
     </style>
 </head>
 <body>
-    <!-- Sidebar -->
-    <nav class="sidebar">
-        <div class="sidebar-header">
-            <i class='bx bx-calendar-event' style="color: #0ef; font-size: 24px;"></i>
-            <h2>Dantico Events</h2>
-        </div>
-        <div class="sidebar-menu">
-            <!-- Dashboard -->
-            <div class="menu-category">
-                <div class="menu-item active">
-                    <a href="./dashboard.html">
-                        <i class='bx bx-home-alt'></i>
-                        <span>Dashboard</span>
-                    </a>
-                </div>
-            </div>
+<?php
+// Ensure this PHP block is at the top of your sidebar include or in a separate navigation.php file
+session_start();
 
-            <!-- Committees Section -->
-            <div class="menu-category">
-                <div class="category-title">Committees</div>
-                <div class="menu-item">
-                    <a href="./add-committee.html">
-                        <i class='bx bx-plus-circle'></i>
-                        <span>Add Committee</span>
-                    </a>
-                </div>
-                <div class="menu-item">
-                    <a href="./committee-list.html">
-                        <i class='bx bx-group'></i>
-                        <span>Committee List</span>
-                    </a>
-                </div>
-            </div>
+// Function to generate base URL with event context
+function getEventContextURL() {
+    $base_url = '';
+    if (isset($_SESSION['current_event_id']) && isset($_SESSION['current_event_code'])) {
+        $base_url = '?event_id=' . urlencode($_SESSION['current_event_id']) . 
+                    '&event_code=' . urlencode($_SESSION['current_event_code']);
+    }
+    return $base_url;
+}
 
-            <!-- Communication Section -->
-            <div class="menu-category">
-                <div class="category-title">Communication</div>
-                <div class="menu-item">
-                    <a href="./chat.html">
-                        <i class='bx bx-message-rounded-dots'></i>
-                        <span>Chat System</span>
-                        <div class="notification-badge">3</div>
-                    </a>
-                </div>
-                <div class="menu-item">
-                    <a href="./video-conference.html">
-                        <i class='bx bx-video'></i>
-                        <span>Video Conference</span>
-                    </a>
-                </div>
-            </div>
-            <!--Contributions--> <i class='bx bx-video'></i>
-            <div class="menu-category">
-                <div class="category-title">Contributions</div>
-                <div class="menu-item">
-                    <a href="./make_contribution.html">
-                        <i class='bx bx-plus-circle'></i>
-                        <span>make contributions</span>
-                       
-                    </a>
-                </div>
-                <div class="menu-item">
-                    <a href="./contributions.html">
-                        <i class='bx bx-money'></i>
-                        <span>contribiutions</span>
-                    </a>
-                </div>
-            </div>
+// Get the event context URL to be used across navigation
+$base_url = getEventContextURL();
+?>
 
-            <!-- Reviews Section -->
-            <div class="menu-category">
-                <div class="category-title">Reviews</div>
-                <div class="menu-item">
-                    <a href="./minutes.html">
-                        <i class='bx bxs-timer'></i>
-                        <span>Minutes</span>
-                    </a>
-                </div>
-                <div class="menu-item">
-                    <a href="./tasks.html">
-                        <i class='bx bx-task' ></i>
-                        <span>Tasks</span>
-                    </a>
-                </div>
-            </div>
-
-                <div class="menu-item">
-                    <a href="./reports.html">
-                        <i class='bx bx-line-chart'></i>
-                        <span>Reports</span>
-                    </a>
-                </div>
-            </div>
-
-
-            <!-- Other Tools -->
-            <div class="menu-category">
-                <div class="category-title">Tools</div>
-                <div class="menu-item">
-                    <a href="./schedule.html">
-                        <i class='bx bx-calendar'></i>
-                        <span>Schedule</span>
-                    </a>
-                </div>
-                <div class="menu-item">
-                    <a href="./settings.html">
-                        <i class='bx bx-cog'></i>
-                        <span>Settings</span>
-                    </a>
-                </div>
+<!-- Sidebar Navigation -->
+<nav class="sidebar">
+    <div class="sidebar-header">
+        <i class='bx bx-calendar-event' style="color: #0ef; font-size: 24px;"></i>
+        <h2>Dantico Events</h2>
+    </div>
+    <div class="sidebar-menu">
+        <!-- Dashboard -->
+        <div class="menu-category">
+            <div class="menu-item active">
+                <a href="./dashboard.php<?= $base_url ?>">
+                    <i class='bx bx-home-alt'></i>
+                    <span>Dashboard</span>
+                </a>
             </div>
         </div>
-    </nav>
+
+        <!-- Committees Section -->
+        <div class="menu-category">
+            <div class="category-title">paybill</div>
+            <div class="menu-item">
+                <a href="./paybill.php<?= $base_url ?>">
+                    <i class='bx bx-plus-circle'></i>
+                    <span>Add Paybill</span>
+                </a>
+            </div>
+            <div class="menu-item">
+                <a href="./committee-list.php<?= $base_url ?>">
+                    <i class='bx bx-group'></i>
+                    <span>Committee List</span>
+                </a>
+            </div>
+        </div>
+
+        <!-- Communication Section -->
+        <div class="menu-category">
+            <div class="category-title">Communication</div>
+            <div class="menu-item">
+                <a href="./chat.php<?= $base_url ?>">
+                    <i class='bx bx-message-rounded-dots'></i>
+                    <span>Chat System</span>
+                    <div class="notification-badge">3</div>
+                </a>
+            </div>
+            <div class="menu-item">
+                <a href="./video-conference.php<?= $base_url ?>">
+                    <i class='bx bx-video'></i>
+                    <span>Video Conference</span>
+                </a>
+            </div>
+        </div>
+
+        <!-- Contributions Section -->
+        <div class="menu-category">
+            <div class="category-title">Contributions</div>
+            <div class="menu-item">
+                <a href="./make_contribution.php<?= $base_url ?>">
+                    <i class='bx bx-plus-circle'></i>
+                    <span>Make Contributions</span>
+                </a>
+            </div>
+            <div class="menu-item">
+                <a href="./contributions.php<?= $base_url ?>">
+                    <i class='bx bx-money'></i>
+                    <span>Contributions</span>
+                </a>
+            </div>
+        </div>
+
+        <!-- Reviews Section -->
+        <div class="menu-category">
+            <div class="category-title">Reviews</div>
+            <div class="menu-item">
+                <a href="./minutes.php<?= $base_url ?>">
+                    <i class='bx bxs-timer'></i>
+                    <span>Minutes</span>
+                </a>
+            </div>
+            <div class="menu-item">
+                <a href="./tasks.php<?= $base_url ?>">
+                    <i class='bx bx-task'></i>
+                    <span>Tasks</span>
+                </a>
+            </div>
+            <div class="menu-item">
+                <a href="./reports.php<?= $base_url ?>">
+                    <i class='bx bx-line-chart'></i>
+                    <span>Reports</span>
+                </a>
+            </div>
+        </div>
+
+        <!-- Other Tools -->
+        <div class="menu-category">
+            <div class="category-title">Tools</div>
+            <div class="menu-item">
+                <a href="./schedule.php<?= $base_url ?>">
+                    <i class='bx bx-calendar'></i>
+                    <span>Schedule</span>
+                </a>
+            </div>
+            <div class="menu-item">
+                <a href="./settings.php<?= $base_url ?>">
+                    <i class='bx bx-cog'></i>
+                    <span>Settings</span>
+                </a>
+            </div>
+        </div>
+    </div>
+</nav>
 
 
     <main class="main-content">

@@ -31,6 +31,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['event_code'])) {
                             if ($join_stmt = $conn->prepare("INSERT INTO event_members (event_id, user_id, role, joined_via_link, status) VALUES (?, ?, 'member', 0, 'active')")) {
                                 $join_stmt->bind_param("ii", $event['id'], $_SESSION['user_id']);
                                 if ($join_stmt->execute()) {
+                                    // Update user's last_active timestamp and set online status
+                                    $update_stmt = $conn->prepare("UPDATE users SET last_active = NOW(), online_status = 'online' WHERE id = ?");
+                                    $update_stmt->bind_param("i", $_SESSION['user_id']);
+                                    $update_stmt->execute();
+                                    $update_stmt->close();
+
                                     $_SESSION['success_message'] = "Successfully joined: " . htmlspecialchars($event['name']);
                                     header("Location: dashboard.php?event_id=" . $event['id'] . "&event_code=" . urlencode($event_code));
                                     exit();
@@ -77,7 +83,6 @@ if ($stmt = $conn->prepare($events_query)) {
     $stmt->close();
 }
 ?>
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
