@@ -1,8 +1,11 @@
 <?php
-
 session_start();
+require_once "db.php";
+// Enable error reporting for debugging
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
 
-// Function to generate base URL with event context
+//Function to generate base URL with event context
 function getEventContextURL() {
     $base_url = '';
     if (isset($_SESSION['current_event_id']) && isset($_SESSION['current_event_code'])) {
@@ -14,33 +17,135 @@ function getEventContextURL() {
 
 // Get the event context URL to be used across navigation
 $base_url = getEventContextURL();
-?>
 
+
+// Initialize messages
+$meeting_msg = '';
+$task_msg = '';
+
+// Handle Meeting Form Submission
+if (isset($_POST['save_meeting'])) {
+    try {
+        // Prepare meeting data
+        $meeting_data = [
+            'event_id' => $_SESSION['current_event_id'],
+            'meeting_type' => $_POST['meeting_type'],
+            'meeting_date' => $_POST['date'],
+            'meeting_time' => $_POST['start_time'],  // Changed from 'time' to 'start_time'
+            'end_time' => $_POST['end_time'],        // Added end_time
+            'status' => ($_POST['save_meeting'] === 'draft') ? 'draft' : 'scheduled',
+            'created_by' => $_SESSION['user_id']
+        ];
+
+        // Insert meeting into the database
+        $stmt = $conn->prepare("INSERT INTO meetings (event_id, meeting_type, meeting_date, meeting_time, end_time, status, created_by) 
+                               VALUES (?, ?, ?, ?, ?, ?, ?)");
+        $stmt->bind_param("isssssi", 
+            $meeting_data['event_id'], 
+            $meeting_data['meeting_type'], 
+            $meeting_data['meeting_date'], 
+            $meeting_data['meeting_time'],
+            $meeting_data['end_time'],
+            $meeting_data['status'], 
+            $meeting_data['created_by']);
+        
+        if ($stmt->execute()) {
+            $meeting_msg = "Meeting saved successfully!";
+        } else {
+            $meeting_msg = "Error saving meeting: " . $stmt->error;
+        }
+    } catch (Exception $e) {
+        $meeting_msg = "Error: " . $e->getMessage();
+    }
+}
+
+// Handle Task Form Submission
+if (isset($_POST['add_task'])) {
+    try {
+        // Prepare task data
+        $task_data = [
+            'event_id' => $_SESSION['current_event_id'], // Add event_id from session
+            'meeting_id' => $_POST['meeting_id'],
+            'description' => $_POST['task_description'],
+            'assigned_to' => $_POST['assigned_to'],
+            'due_date' => $_POST['due_date'],
+            'status' => 'pending'
+        ];
+
+        // Insert task into the database
+        $stmt = $conn->prepare("INSERT INTO tasks (event_id, meeting_id, description, assigned_to, due_date, status) 
+                               VALUES (?, ?, ?, ?, ?, ?)");
+        $stmt->bind_param("iissss", 
+            $task_data['event_id'],
+            $task_data['meeting_id'],
+            $task_data['description'],
+            $task_data['assigned_to'],
+            $task_data['due_date'],
+            $task_data['status']);
+        
+        if ($stmt->execute()) {
+            $task_msg = "Task added successfully!";
+        } else {
+            $task_msg = "Error adding task: " . $stmt->error;
+        }
+    } catch (Exception $e) {
+        $task_msg = "Error: " . $e->getMessage();
+    }
+}
+// Fetch existing meetings for task assignment
+$meetings_query = "SELECT m.meeting_id, m.event_id, m.meeting_type, 
+                          m.meeting_date, m.meeting_time, m.end_time, m.status
+                   FROM meetings m 
+                   WHERE m.event_id = ? 
+                   ORDER BY m.meeting_date ASC, m.meeting_time ASC";
+
+$stmt = $conn->prepare($meetings_query);
+$stmt->bind_param("i", $_SESSION['current_event_id']);
+$stmt->execute();
+$meetings_result = $stmt->get_result();
+$meetings = $meetings_result->fetch_all(MYSQLI_ASSOC);
+
+// Fetch event members for task assignment
+$members_query = "SELECT em.user_id, u.username, em.role, em.committee_role 
+                  FROM event_members em
+                  JOIN users u ON em.user_id = u.id
+                  WHERE em.event_id = ? 
+                  AND em.status = 'active'
+                  ORDER BY em.role DESC, u.username ASC";
+$stmt = $conn->prepare($members_query);
+$stmt->bind_param("i", $_SESSION['current_event_id']);
+$stmt->execute();
+$members_result = $stmt->get_result();
+$event_members = $members_result->fetch_all(MYSQLI_ASSOC);
+
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Minutes & Tasks - Event Management Dashboard</title>
+    <title>Meeting Tasks Tracker</title>
     <link href='https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css' rel='stylesheet'>
     <style>
+        :root {
+            --sidebar-width: 260px;
+            --header-height: 70px;
+            --primary-color: #0ef;
+            --bg-dark: #081b29;
+            --transition-speed: 0.3s;
+        }
+
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-            font-family: 'poppins', sans-serif;
-        }
-
-        :root {
-            --sidebar-width: 260px;
-            --collapsed-width: 60px;
-            --header-height: 60px;
+            font-family: 'Poppins', sans-serif;
         }
 
         body {
             min-height: 100vh;
-            background: #081b29;
-            overflow-x: hidden;
+            background: var(--bg-dark);
+            color: #fff;
         }
 
         /* Sidebar Styles */
@@ -50,14 +155,10 @@ $base_url = getEventContextURL();
             left: 0;
             height: 100%;
             width: var(--sidebar-width);
-            background: rgba(8, 27, 41, 0.9);
-            border-right: 2px solid #0ef;
-            transition: all 0.5s ease;
+            background: rgba(8, 27, 41, 0.95);
+            border-right: 2px solid var(--primary-color);
+            transition: all var(--transition-speed) ease;
             z-index: 100;
-        }
-
-        .sidebar.collapse {
-            width: var(--collapsed-width);
         }
 
         .sidebar-header {
@@ -65,19 +166,13 @@ $base_url = getEventContextURL();
             display: flex;
             align-items: center;
             padding: 0 15px;
-            border-bottom: 2px solid #0ef;
+            border-bottom: 2px solid var(--primary-color);
         }
 
         .sidebar-header h2 {
             color: #fff;
             font-size: 20px;
             margin-left: 15px;
-            white-space: nowrap;
-            transition: all 0.5s ease;
-        }
-
-        .sidebar.collapse .sidebar-header h2 {
-            opacity: 0;
         }
 
         .sidebar-menu {
@@ -85,13 +180,23 @@ $base_url = getEventContextURL();
             height: calc(100% - var(--header-height));
             overflow-y: auto;
         }
+                 /* Hide sidebar by default for unauthorized users */
+       .sidebar.hidden {
+        display: none;
+             }
+
+           /* Show sidebar for authorized users */
+       .sidebar.visible {
+          display: block;
+         }
+
 
         .menu-category {
             margin: 10px 0;
         }
 
         .category-title {
-            color: #0ef;
+            color: var(--primary-color);
             font-size: 12px;
             text-transform: uppercase;
             padding: 10px 20px;
@@ -99,17 +204,12 @@ $base_url = getEventContextURL();
             opacity: 0.7;
         }
 
-        .sidebar.collapse .category-title {
-            opacity: 0;
-        }
-
         .menu-item {
             padding: 12px 20px 12px 30px;
             display: flex;
             align-items: center;
             cursor: pointer;
-            transition: all 0.3s ease;
-            position: relative;
+            transition: all var(--transition-speed) ease;
         }
 
         .menu-item a {
@@ -131,143 +231,78 @@ $base_url = getEventContextURL();
         .menu-item i {
             font-size: 24px;
             min-width: 40px;
-            color: #0ef;
-            transition: all 0.3s ease;
+            color: var(--primary-color);
+            transition: all var(--transition-speed) ease;
         }
 
         .menu-item span {
             color: #fff;
             white-space: nowrap;
-            transition: all 0.3s ease;
+            transition: all var(--transition-speed) ease;
             margin-left: 10px;
         }
 
-        .sidebar.collapse .menu-item span {
-            opacity: 0;
-        }
-
         .notification-badge {
-            position: absolute;
-            top: 8px;
-            right: 8px;
-            background: #0ef;
-            color: #081b29;
-            border-radius: 50%;
-            width: 18px;
-            height: 18px;
+            background: var(--primary-color);
+            color: var(--bg-dark);
+            padding: 2px 6px;
+            border-radius: 10px;
             font-size: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            margin-left: auto;
         }
 
-        /* Main Content Styles */
         .main-content {
-            position: relative;
-            left: var(--sidebar-width);
-            width: calc(100% - var(--sidebar-width));
-            min-height: 100vh;
-            transition: all 0.5s ease;
+            margin-left: var(--sidebar-width);
             padding: 20px;
         }
 
-        .main-content.expand {
-            left: var(--collapsed-width);
-            width: calc(100% - var(--collapsed-width));
-        }
-
-        .header {
-            height: var(--header-height);
-            display: flex;
-            align-items: center;
-            padding: 0 20px;
-            background: rgba(8, 27, 41, 0.9);
-            border: 2px solid #0ef;
-            border-radius: 10px;
-            margin-bottom: 20px;
-        }
-
-        .toggle-btn {
-            font-size: 24px;
-            color: #0ef;
-            cursor: pointer;
-            background: none;
-            border: none;
-            outline: none;
-        }
-
-        .header-title {
-            color: #fff;
-            margin-left: 20px;
-            font-size: 20px;
-        }
-
-        .header-actions {
-            margin-left: auto;
-            display: flex;
-            gap: 15px;
-        }
-
-        .header-actions i {
-            font-size: 24px;
-            color: #0ef;
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-
-        .meeting-form {
-            color: #fff;
+        .container {
             max-width: 1200px;
             margin: 0 auto;
-        }
-
-        .form-section {
-            background: rgba(8, 27, 41, 0.9);
-            border: 2px solid #0ef;
-            border-radius: 10px;
             padding: 20px;
-            margin-bottom: 20px;
         }
 
-        .section-header {
-            color: #0ef;
-            font-size: 18px;
-            margin-bottom: 15px;
-            padding-bottom: 10px;
-            border-bottom: 1px solid #0ef;
+        .section {
+            background: rgba(8, 27, 41, 0.95);
+            border: 2px solid var(--primary-color);
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 25px;
+            box-shadow: 0 4px 6px rgba(0, 238, 255, 0.1);
+        }
+
+        .section-title {
+            color: var(--primary-color);
+            font-size: 20px;
+            margin-bottom: 25px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid var(--primary-color);
             display: flex;
-            justify-content: space-between;
             align-items: center;
-        }
-
-        .form-row {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
-            margin-bottom: 15px;
+            gap: 10px;
         }
 
         .form-group {
-            margin-bottom: 15px;
+            margin-bottom: 20px;
         }
 
         .form-group label {
             display: block;
-            color: #0ef;
-            margin-bottom: 8px;
-            font-size: 14px;
+            color: var(--primary-color);
+            margin-bottom: 10px;
+            font-weight: 500;
         }
 
         .form-group input,
         .form-group select,
         .form-group textarea {
             width: 100%;
-            padding: 10px;
-            background: rgba(255, 255, 255, 0.1);
-            border: 1px solid #0ef;
-            border-radius: 5px;
+            padding: 12px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--primary-color);
+            border-radius: 8px;
             color: #fff;
-            font-size: 14px;
+            transition: all var(--transition-speed) ease;
         }
 
         .form-group textarea {
@@ -275,103 +310,43 @@ $base_url = getEventContextURL();
             resize: vertical;
         }
 
-        .attendee-chips {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            margin-top: 10px;
-        }
-
-        .attendee-chip {
-            background: rgba(0, 238, 255, 0.1);
-            border: 1px solid #0ef;
-            border-radius: 20px;
-            padding: 5px 12px;
+        .btn {
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 15px;
+            font-weight: 500;
+            transition: all var(--transition-speed) ease;
             display: flex;
             align-items: center;
             gap: 8px;
         }
 
-        .attendee-chip i {
-            cursor: pointer;
-            font-size: 16px;
-        }
-
-        .action-item {
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid rgba(0, 238, 255, 0.3);
-            border-radius: 5px;
-            padding: 15px;
-            margin-bottom: 10px;
-        }
-
-        .action-header {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 10px;
-        }
-
-        .btn-container {
-            display: flex;
-            justify-content: flex-end;
-            gap: 15px;
-            margin-top: 20px;
-        }
-
-        .btn {
-            padding: 10px 20px;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 14px;
-            font-weight: 500;
-            transition: all 0.3s ease;
-        }
-
         .btn-primary {
-            background: #0ef;
-            color: #081b29;
+            background: var(--primary-color);
+            color: var(--bg-dark);
             border: none;
         }
 
-        .btn-secondary {
+        .btn-outline {
             background: transparent;
-            border: 1px solid #0ef;
-            color: #0ef;
+            border: 1px solid var(--primary-color);
+            color: var(--primary-color);
         }
 
-        .btn-add {
-            background: transparent;
-            border: 1px dashed #0ef;
-            color: #0ef;
-            width: 100%;
-            padding: 10px;
-            margin-top: 10px;
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-
-        .btn-add:hover {
+        .alert {
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 8px;
             background: rgba(0, 238, 255, 0.1);
-        }
-
-        .status-badge {
-            background: #0ef;
-            color: #081b29;
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 12px;
-        }
-
-        .document-preview {
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px dashed #0ef;
-            border-radius: 5px;
-            padding: 20px;
-            margin-top: 20px;
+            border: 1px solid var(--primary-color);
+            color: #fff;
         }
     </style>
 </head>
 <body>
+        
+<!-- Sidebar Navigation -->
 <nav class="sidebar">
     <div class="sidebar-header">
         <i class='bx bx-calendar-event' style="color: #0ef; font-size: 24px;"></i>
@@ -390,13 +365,7 @@ $base_url = getEventContextURL();
 
         <!-- Committees Section -->
         <div class="menu-category">
-            <div class="category-title">Committees</div>
-            <div class="menu-item">
-                <a href="./add-committee.php<?= $base_url ?>">
-                    <i class='bx bx-plus-circle'></i>
-                    <span>Add Committee</span>
-                </a>
-            </div>
+            
             <div class="menu-item">
                 <a href="./committee-list.php<?= $base_url ?>">
                     <i class='bx bx-group'></i>
@@ -442,25 +411,14 @@ $base_url = getEventContextURL();
 
         <!-- Reviews Section -->
         <div class="menu-category">
-            <div class="category-title">Reviews</div>
-            <div class="menu-item">
-                <a href="./minutes.php<?= $base_url ?>">
-                    <i class='bx bxs-timer'></i>
-                    <span>Minutes</span>
-                </a>
-            </div>
+            
             <div class="menu-item">
                 <a href="./tasks.php<?= $base_url ?>">
                     <i class='bx bx-task'></i>
                     <span>Tasks</span>
                 </a>
             </div>
-            <div class="menu-item">
-                <a href="./reports.php<?= $base_url ?>">
-                    <i class='bx bx-line-chart'></i>
-                    <span>Reports</span>
-                </a>
-            </div>
+            
         </div>
 
         <!-- Other Tools -->
@@ -472,270 +430,140 @@ $base_url = getEventContextURL();
                     <span>Schedule</span>
                 </a>
             </div>
-            <div class="menu-item">
-                <a href="./settings.php<?= $base_url ?>">
-                    <i class='bx bx-cog'></i>
-                    <span>Settings</span>
-                </a>
-            </div>
+          
         </div>
     </div>
 </nav>
-      <!-- Main Content -->
-      <div class="main-content">
-        <div class="header">
-            <button class="toggle-btn">
-                <i class='bx bx-menu'></i>
-            </button>
-            <h2 class="header-title">Meeting Minutes</h2>
-            <div class="header-actions">
-                <i class='bx bx-search'></i>
-                <i class='bx bx-bell'></i>
-                <i class='bx bx-user-circle'></i>
-            </div>
-        </div>
 
-        <form class="meeting-form">
-            <!-- Basic Information Section -->
-            <div class="form-section">
-                <div class="section-header">
-                    <span>Meeting Information</span>
-                    <div class="status-badge">Draft</div>
-                </div>
-                <div class="form-row">
+   
+    <div class="main-content">
+        <div class="container">
+            <!-- Meeting Form Section -->
+            <div class="section">
+                <h2 class="section-title">
+                    <i class='bx bx-calendar-edit'></i>
+                    Schedule New Meeting
+                </h2>
+                <?php if ($meeting_msg): ?>
+                    <div class="alert"><?php echo htmlspecialchars($meeting_msg); ?></div>
+                <?php endif; ?>
+                
+                <form id="meetingForm" method="POST" action="">
                     <div class="form-group">
                         <label>Meeting Type</label>
-                        <select required>
-                            <option value="">Select meeting type</option>
-                            <option value="board">Board Meeting</option>
-                            <option value="committee">Committee Meeting</option>
-                            <option value="planning">Planning Session</option>
-                            <option value="review">Review Meeting</option>
+                        <select name="meeting_type" required>
+                            <?php
+                            $meeting_types = [
+                                'board' => 'Board Meeting',
+                                'committee' => 'Committee Meeting',
+                                'planning' => 'Planning Session'
+                            ];
+                            foreach ($meeting_types as $value => $label) {
+                                echo '<option value="' . htmlspecialchars($value) . '">' . 
+                                     htmlspecialchars($label) . '</option>';
+                            }
+                            ?>
                         </select>
                     </div>
-                    <div class="form-group">
-                        <label>Committee</label>
-                        <select required>
-                            <option value="">Select committee</option>
-                            <option value="executive">Executive Committee</option>
-                            <option value="planning">Planning Committee</option>
-                            <option value="finance">Finance Committee</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="form-row">
+
                     <div class="form-group">
                         <label>Date</label>
-                        <input type="date" required>
+                        <input type="date" name="date" required>
                     </div>
-                    <div class="form-group">
-                        <label>Time</label>
-                        <input type="time" required>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label>Venue/Platform</label>
-                    <input type="text" placeholder="e.g., Conference Room A / Zoom Meeting" required>
-                </div>
-            </div>
 
-            <!-- Attendance Section -->
-            <div class="form-section">
-                <div class="section-header">
-                    <span>Attendance</span>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>Present Members</label>
-                        <input type="text" placeholder="Type name and press Enter" id="attendeeInput">
-                        <div class="attendee-chips" id="presentMembers">
-                            <!-- Chips will be added here -->
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                        <div class="form-group">
+                            <label>Start Time</label>
+                            <input type="time" name="start_time" required>
+                        </div>
+                        <div class="form-group">
+                            <label>End Time</label>
+                            <input type="time" name="end_time" required>
                         </div>
                     </div>
-                    <div class="form-group">
-                        <label>Absent Members (with apology)</label>
-                        <input type="text" placeholder="Type name and press Enter" id="absentInput">
-                        <div class="attendee-chips" id="absentMembers">
-                            <!-- Chips will be added here -->
-                        </div>
+
+                    <div style="display: flex; justify-content: flex-end; gap: 15px;">
+                        <button type="submit" name="save_meeting" value="draft" class="btn btn-outline">
+                            <i class='bx bx-save'></i> Save Draft
+                        </button>
+                        <button type="submit" name="save_meeting" value="final" class="btn btn-primary">
+                            <i class='bx bx-check-circle'></i> Schedule Meeting
+                        </button>
                     </div>
-                </div>
+                </form>
             </div>
 
-            <!-- Agenda and Minutes Section -->
-            <div class="form-section">
-                <div class="section-header">
-                    <span>Agenda and Discussion</span>
-                </div>
-                <div class="form-group">
-                    <label>Previous Meeting Review</label>
-                    <textarea placeholder="Status of action items from previous meeting"></textarea>
-                </div>
-                <div class="form-group">
-                    <label>Current Agenda Items</label>
-                    <div id="agendaItems">
-                        <div class="action-item">
-                            <div class="action-header">
-                                <input type="text" placeholder="Agenda Item Title" style="width: 100%">
-                            </div>
-                            <textarea placeholder="Discussion points and decisions"></textarea>
-                        </div>
-                    </div>
-                    <button type="button" class="btn-add" onclick="addAgendaItem()">
-                        <i class='bx bx-plus'></i> Add Agenda Item
-                    </button>
-                </div>
-            </div>
-
-            <!-- Action Items Section -->
-            <div class="form-section">
-                <div class="section-header">
-                    <span>Action Items</span>
-                </div>
-                <div id="actionItems">
-                    <div class="action-item">
-                        <div class="action-header">
-                            <input type="text" placeholder="Action Item" style="width: 70%">
-                            <input type="date" style="width: 25%">
-                        </div>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label>Assigned To</label>
-                                <input type="text" placeholder="Responsible person">
-                            </div>
-                            <div class="form-group">
-                                <label>Status</label>
-                                <select>
-                                    <option value="pending">Pending</option>
-                                    <option value="in-progress">In Progress</option>
-                                    <option value="completed">Completed</option>
-                                </select>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <button type="button" class="btn-add" onclick="addActionItem()">
-                    <i class='bx bx-plus'></i> Add Action Item
-                </button>
-            </div>
-
-            <!-- Next Meeting Section -->
-            <div class="form-section">
-                <div class="section-header">
-                    <span>Next Meeting</span>
-                </div>
-                <div class="form-row">
+            <!-- Task Form Section -->
+            <div class="section">
+                <h2 class="section-title">
+                    <i class='bx bx-task'></i>
+                    Add New Task
+                </h2>
+                <?php if ($task_msg): ?>
+                    <div class="alert"><?php echo htmlspecialchars($task_msg); ?></div>
+                <?php endif; ?>
+                
+                <form id="taskForm" method="POST" action="">
                     <div class="form-group">
-                        <label>Tentative Date</label>
-                        <input type="date">
-                    </div>
-                    <div class="form-group">
-                        <label>Tentative Time</label>
-                        <input type="time">
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label>Agenda Points for Next Meeting</label>
-                    <textarea placeholder="List preliminary agenda points for the next meeting"></textarea>
-                </div>
-            </div>
-
-            <div class="btn-container">
-                <button type="button" class="btn btn-secondary">Save as Draft</button>
-                <button type="button" class="btn btn-secondary">Preview</button>
-                <button type="submit" class="btn btn-primary">Finalize Minutes</button>
-            </div>
-        </form>
-    </div>
-    <script>
-         // Toggle sidebar
-         const toggleBtn = document.querySelector('.toggle-btn');
-        const sidebar = document.querySelector('.sidebar');
-        const mainContent = document.querySelector('.main-content');
-
-        toggleBtn.addEventListener('click', () => {
-            sidebar.classList.toggle('collapse');
-            mainContent.classList.toggle('expand');
-        });
-
-        // Handle menu item clicks
-        const menuItems = document.querySelectorAll('.menu-item');
-        menuItems.forEach(item => {
-            item.addEventListener('click', () => {
-                // Remove active class from all items
-                menuItems.forEach(i => i.classList.remove('active'));
-                // Add active class to clicked item
-                item.classList.add('active');
-                // Update header title based on selected menu
-                const spanText = item.querySelector('span').textContent;
-                document.querySelector('.header-title').textContent = spanText;
-            });
-        });
-        // Handle attendee chips
-        function addAttendeeChip(inputId, containerId) {
-            const input = document.getElementById(inputId);
-            const container = document.getElementById(containerId);
-            
-            input.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter' && input.value.trim()) {
-                    e.preventDefault();
-                    const chip = document.createElement('div');
-                    chip.className = 'attendee-chip';
-                    chip.innerHTML = `
-                        <span>${input.value.trim()}</span>
-                        <i class='bx bx-x' onclick="this.parentElement.remove()"></i>
-                    `;
-                    container.appendChild(chip);
-                    input.value = '';
-                }
-            });
-        }
-
-        // Initialize attendee chip handlers
-        addAttendeeChip('attendeeInput', 'presentMembers');
-        addAttendeeChip('absentInput', 'absentMembers');
-
-        // Add agenda item
-        function addAgendaItem() {
-            const container = document.getElementById('agendaItems');
-            const item = document.createElement('div');
-            item.className = 'action-item';
-            item.innerHTML = `
-                <div class="action-header">
-                    <input type="text" placeholder="Agenda Item Title" style="width: 100%">
-                </div>
-                <textarea placeholder="Discussion points and decisions"></textarea>
-            `;
-            container.appendChild(item);
-        }
-
-        // Add action item
-        function addActionItem() {
-            const container = document.getElementById('actionItems');
-            const item = document.createElement('div');
-            item.className = 'action-item';
-            item.innerHTML = `
-                <div class="action-header">
-                    <input type="text" placeholder="Action Item" style="width: 70%">
-                    <input type="date" style="width: 25%">
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label>Assigned To</label>
-                        <input type="text" placeholder="Responsible person">
-                    </div>
-                    <div class="form-group">
-                        <label>Status</label>
-                        <select>
-                            <option value="pending">Pending</option>
-                            <option value="in-progress">In Progress</option>
-                            <option value="completed">Completed</option>
+                        <label>Select Meeting</label>
+                        <select name="meeting_id" required>
+                            <option value="">Choose a meeting...</option>
+                            <?php 
+                            if ($meetings && mysqli_num_rows($meetings_result) > 0) {
+                                foreach ($meetings as $meeting) {
+                                    $meeting_text = htmlspecialchars(ucfirst($meeting['meeting_type']) . ' - ' . 
+                                                   date('M d, Y', strtotime($meeting['meeting_date'])) . ' ' . 
+                                                   date('h:i A', strtotime($meeting['meeting_time'])));
+                                    echo '<option value="' . htmlspecialchars($meeting['meeting_id']) . '">' . 
+                                         $meeting_text . '</option>';
+                                }
+                            }
+                            ?>
                         </select>
                     </div>
-                </div>
-            `;
-            container.appendChild(item);
+
+                    <div class="form-group">
+                        <label>Task Description</label>
+                        <textarea name="task_description" required></textarea>
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                        <div class="form-group">
+                            <label>Assigned To</label>
+                            <select name="assigned_to" required>
+    <option value="">Select member...</option>
+    <?php 
+    if ($event_members && mysqli_num_rows($members_result) > 0) {
+        foreach ($event_members as $member) {
+            $member_text = htmlspecialchars($member['username']);
+            if ($member['committee_role']) {
+                $member_text .= ' (' . htmlspecialchars($member['committee_role']) . ')';
+            } else {
+                $member_text .= ' (' . htmlspecialchars($member['role']) . ')';
+            }
+            echo '<option value="' . htmlspecialchars($member['username']) . '">' . 
+                 $member_text . '</option>';
         }
-    </script>
+    }
+    ?>
+</select>
+                        </div>
+                        <div class="form-group">
+                            <label>Due Date</label>
+                            <input type="date" name="due_date" required>
+                        </div>
+                    </div>
+
+                    <div style="display: flex; justify-content: flex-end;">
+                        <button type="submit" name="add_task" class="btn btn-primary">
+                            <i class='bx bx-plus'></i> Add Task
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+           
+        </div>
+    </div>
 </body>
 </html>

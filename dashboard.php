@@ -1,36 +1,84 @@
 <?php
-// Start the session at the beginning of each page
 session_start();
 
 // Include database connection
 require 'db.php';
+// Function to generate base URL with event context
+function getEventContextURL() {
+    $base_url = '';
+    if (isset($_SESSION['current_event_id']) && isset($_SESSION['current_event_code'])) {
+        $base_url = '?event_id=' . urlencode($_SESSION['current_event_id']) . 
+                    '&event_code=' . urlencode($_SESSION['current_event_code']);
+    }
+    return $base_url;
+}
 
-// Check if user is logged in, with more robust session validation
-if (!isset($_SESSION['user_id']) || empty($_SESSION['user_id'])) {
-    // Clear any existing session data
-    session_unset();
-    session_destroy();
+// Get the event context URL
+$base_url = getEventContextURL();
+
+// Fetch user roles and event context
+function getUserRoles($conn, $user_id, $event_id) {
+    $sql = "SELECT em.role, em.committee_role, e.* 
+            FROM event_members em
+            JOIN events e ON em.event_id = e.id 
+            WHERE em.user_id = ? AND em.event_id = ? AND em.status = 'active'";
     
-    // Redirect to login page
-    header('Location: login.php');
-    exit();
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param("ii", $user_id, $event_id);
+    $stmt->execute();
+    return $stmt->get_result()->fetch_assoc();
 }
+// Function to check user's role access
+function hasAccess($required_roles, $user_role, $committee_role) {
+    // Admin or Organizer has access to everything
+    if ($user_role === 'admin' || $user_role === 'organizer') {
+        return true;
+    }
 
-// At the start, handle event selection and session management
-if (isset($_GET['event_id']) && isset($_GET['event_code'])) {
-    // Sanitize and store current event details in session
-    $_SESSION['current_event_id'] = intval($_GET['event_id']);
-    $_SESSION['current_event_code'] = htmlspecialchars($_GET['event_code']);
+    // Convert required roles to lowercase for case-insensitive comparison
+    $required_roles = array_map('strtolower', $required_roles);
+
+    // For members with specific committee roles
+    if ($user_role === 'member' && !empty($committee_role)) {
+        $committee_role = strtolower($committee_role);  // Convert to lowercase
+        return in_array($committee_role, $required_roles);
+    }
+
+    // If the user is a member but has no committee role, they only have access to basic features
+    if ($user_role === 'member' && empty($committee_role)) {
+        return in_array('member', $required_roles);
+    }
+
+    // If none of the above matched, return false (user has no access)
+    return false;
 }
-
-// Retrieve the current event details from session
-$event_id = $_SESSION['current_event_id'] ?? null;
-$event_code = $_SESSION['current_event_code'] ?? null;
 
 // User ID from session
 $user_id = $_SESSION['user_id'];
 
-// Update user's online status and last_active when entering dashboard
+// Handle event_id from URL
+if (isset($_GET['event_id'])) {
+    $_SESSION['current_event_id'] = intval($_GET['event_id']);
+    
+    if (!isset($_GET['event_code'])) {
+        $code_stmt = $conn->prepare("SELECT event_code FROM events WHERE id = ?");
+        $code_stmt->bind_param("i", $_SESSION['current_event_id']);
+        $code_stmt->execute();
+        $result = $code_stmt->get_result();
+        if ($event_data = $result->fetch_assoc()) {
+            $_SESSION['current_event_code'] = $event_data['event_code'];
+        }
+        $code_stmt->close();
+    } else {
+        $_SESSION['current_event_code'] = htmlspecialchars($_GET['event_code']);
+    }
+}
+
+// Retrieve current event details
+$event_id = $_SESSION['current_event_id'] ?? null;
+$event_code = $_SESSION['current_event_code'] ?? null;
+
+// Update user's online status
 $update_stmt = $conn->prepare("UPDATE users SET 
     last_login = NOW(), 
     last_active = NOW(), 
@@ -41,7 +89,22 @@ $update_stmt->execute();
 $update_stmt->close();
 
 try {
-    // First, check if the user is a member of any events
+    // Get user's roles for the current event
+    $user_roles_sql = "SELECT em.role, em.committee_role, e.* 
+                      FROM event_members em
+                      JOIN events e ON em.event_id = e.id 
+                      WHERE em.event_id = ? AND em.user_id = ? 
+                      AND em.status = 'active'";
+    $roles_stmt = $conn->prepare($user_roles_sql);
+    $roles_stmt->bind_param("ii", $event_id, $user_id);
+    $roles_stmt->execute();
+    $result = $roles_stmt->get_result();
+    $user_event_info = $result->fetch_assoc();
+    
+    $user_role = $user_event_info['role'] ?? '';
+    $committee_role = $user_event_info['committee_role'] ?? '';
+    
+    // Get all events user is member of
     $member_events_sql = "SELECT e.* FROM events e 
                          JOIN event_members em ON e.id = em.event_id 
                          WHERE em.user_id = ? AND em.status = 'active'
@@ -53,9 +116,8 @@ try {
     $result = $stmt->get_result();
     $events = $result->fetch_all(MYSQLI_ASSOC);
     
-    // If specific event requested or stored in session
+    // Handle specific event access
     if ($event_id) {
-        // Check if user has access to this specific event
         $access_sql = "SELECT e.* FROM events e 
                       JOIN event_members em ON e.id = em.event_id 
                       WHERE e.id = ? 
@@ -67,20 +129,28 @@ try {
         $event = $access_stmt->get_result()->fetch_assoc();
         
         if (!$event && !empty($events)) {
-            // If no specific event access, default to first event
             $event = $events[0];
-            
-            // Update session with default event
             $_SESSION['current_event_id'] = $event['id'];
             $_SESSION['current_event_code'] = $event['event_code'];
+            
+            // Fetch roles for default event
+            $roles_stmt->bind_param("ii", $event['id'], $user_id);
+            $roles_stmt->execute();
+            $user_event_info = $roles_stmt->get_result()->fetch_assoc();
+            $user_role = $user_event_info['role'] ?? '';
+            $committee_role = $user_event_info['committee_role'] ?? '';
         }
     } else if (!empty($events)) {
-        // Default to most recent event the user is a member of
         $event = $events[0];
-        
-        // Update session with default event
         $_SESSION['current_event_id'] = $event['id'];
         $_SESSION['current_event_code'] = $event['event_code'];
+        
+        // Fetch roles for default event
+        $roles_stmt->bind_param("ii", $event['id'], $user_id);
+        $roles_stmt->execute();
+        $user_event_info = $roles_stmt->get_result()->fetch_assoc();
+        $user_role = $user_event_info['role'] ?? '';
+        $committee_role = $user_event_info['committee_role'] ?? '';
     }
     
     if (!$event && empty($events)) {
@@ -92,7 +162,7 @@ try {
     $error_message = "An error occurred while fetching event data. Please try again later.";
 }
 
-// Session security: Regenerate session ID periodically to prevent session fixation
+// Session security
 if (!isset($_SESSION['last_regeneration']) || time() - $_SESSION['last_regeneration'] > 300) {
     session_regenerate_id(true);
     $_SESSION['last_regeneration'] = time();
@@ -101,18 +171,14 @@ if (!isset($_SESSION['last_regeneration']) || time() - $_SESSION['last_regenerat
 // Timeout check
 $session_timeout = 1800; // 30 minutes
 if (isset($_SESSION['last_activity']) && (time() - $_SESSION['last_activity']) > $session_timeout) {
-    // Destroy the session and redirect to login
     session_unset();
     session_destroy();
     header('Location: login.php?timeout=1');
     exit();
 }
 
-// Update last activity time
 $_SESSION['last_activity'] = time();
 ?>
-
-<!-- Rest of your existing HTML remains the same -->
 
 <!DOCTYPE html>
 <html lang="en">
@@ -160,6 +226,15 @@ $_SESSION['last_activity'] = time();
             font-size: 20px;
             margin-left: 15px;
         }
+        /* Hide sidebar by default for unauthorized users */
+       .sidebar.hidden {
+        display: none;
+             }
+
+       /* Show sidebar for authorized users */
+.          sidebar.visible {
+        display: block;
+           }
 
         .menu-category {
             margin: 10px 0;
@@ -333,32 +408,13 @@ $_SESSION['last_activity'] = time();
     </style>
 </head>
 <body>
-<?php
-// Ensure this PHP block is at the top of your sidebar include or in a separate navigation.php file
-session_start();
-
-// Function to generate base URL with event context
-function getEventContextURL() {
-    $base_url = '';
-    if (isset($_SESSION['current_event_id']) && isset($_SESSION['current_event_code'])) {
-        $base_url = '?event_id=' . urlencode($_SESSION['current_event_id']) . 
-                    '&event_code=' . urlencode($_SESSION['current_event_code']);
-    }
-    return $base_url;
-}
-
-// Get the event context URL to be used across navigation
-$base_url = getEventContextURL();
-?>
-
-<!-- Sidebar Navigation -->
-<nav class="sidebar">
+<nav class="sidebar" <?= !hasAccess(['Treasurer', 'Secretary', 'Chairman', 'Admin', 'member'], $user_role, $committee_role) ? 'style="display: none;"' : '' ?>>
     <div class="sidebar-header">
         <i class='bx bx-calendar-event' style="color: #0ef; font-size: 24px;"></i>
         <h2>Dantico Events</h2>
     </div>
     <div class="sidebar-menu">
-        <!-- Dashboard -->
+        <!-- Dashboard (accessible to all) -->
         <div class="menu-category">
             <div class="menu-item active">
                 <a href="./dashboard.php<?= $base_url ?>">
@@ -368,15 +424,21 @@ $base_url = getEventContextURL();
             </div>
         </div>
 
-        <!-- Committees Section -->
+        <!-- Paybill Section (Visible only to Treasurer and Admin) -->
+        <?php if (hasAccess(['Treasurer', 'Admin'], $user_role, $committee_role)): ?>
         <div class="menu-category">
-            <div class="category-title">paybill</div>
+            <div class="category-title">Paybill</div>
             <div class="menu-item">
                 <a href="./paybill.php<?= $base_url ?>">
                     <i class='bx bx-plus-circle'></i>
                     <span>Add Paybill</span>
                 </a>
             </div>
+           
+        <?php endif; ?>
+           <!-- Committees Section -->
+        <div class="menu-category">
+            
             <div class="menu-item">
                 <a href="./committee-list.php<?= $base_url ?>">
                     <i class='bx bx-group'></i>
@@ -385,14 +447,26 @@ $base_url = getEventContextURL();
             </div>
         </div>
 
-        <!-- Communication Section -->
+        <!-- Minutes Section (Visible only to Secretary) -->
+        <?php if (hasAccess(['Secretary'], $user_role, $committee_role)): ?>
+        <div class="menu-category">
+            <div class="category-title">Reviews</div>
+            <div class="menu-item">
+                <a href="./minutes.php<?= $base_url ?>">
+                    <i class='bx bxs-timer'></i>
+                    <span>Minutes</span>
+                </a>
+            </div>
+        </div>
+        <?php endif; ?>
+
+        <!-- Communication Section (accessible to all) -->
         <div class="menu-category">
             <div class="category-title">Communication</div>
             <div class="menu-item">
                 <a href="./chat.php<?= $base_url ?>">
                     <i class='bx bx-message-rounded-dots'></i>
                     <span>Chat System</span>
-                    <div class="notification-badge">3</div>
                 </a>
             </div>
             <div class="menu-item">
@@ -403,7 +477,7 @@ $base_url = getEventContextURL();
             </div>
         </div>
 
-        <!-- Contributions Section -->
+        <!-- Contributions Section (accessible to all) -->
         <div class="menu-category">
             <div class="category-title">Contributions</div>
             <div class="menu-item">
@@ -420,42 +494,24 @@ $base_url = getEventContextURL();
             </div>
         </div>
 
-        <!-- Reviews Section -->
+        <!-- Tasks Section (accessible to all) -->
         <div class="menu-category">
-            <div class="category-title">Reviews</div>
-            <div class="menu-item">
-                <a href="./minutes.php<?= $base_url ?>">
-                    <i class='bx bxs-timer'></i>
-                    <span>Minutes</span>
-                </a>
-            </div>
+            <div class="category-title">Tasks</div>
             <div class="menu-item">
                 <a href="./tasks.php<?= $base_url ?>">
                     <i class='bx bx-task'></i>
                     <span>Tasks</span>
                 </a>
             </div>
-            <div class="menu-item">
-                <a href="./reports.php<?= $base_url ?>">
-                    <i class='bx bx-line-chart'></i>
-                    <span>Reports</span>
-                </a>
-            </div>
         </div>
 
-        <!-- Other Tools -->
+        <!-- Schedule Section (accessible to all) -->
         <div class="menu-category">
             <div class="category-title">Tools</div>
             <div class="menu-item">
                 <a href="./schedule.php<?= $base_url ?>">
                     <i class='bx bx-calendar'></i>
                     <span>Schedule</span>
-                </a>
-            </div>
-            <div class="menu-item">
-                <a href="./settings.php<?= $base_url ?>">
-                    <i class='bx bx-cog'></i>
-                    <span>Settings</span>
                 </a>
             </div>
         </div>
@@ -474,7 +530,7 @@ $base_url = getEventContextURL();
 
             <?php if ($event): ?>
                 <div class="event-header">
-                    <h1 class="event-title"><?php echo htmlspecialchars($event['name']); ?></h1>
+                    <h1 class="event-title"><?php echo htmlspecialchars($event['event_name']); ?></h1>
                     <div class="event-code">
                         <div class="code-container">
                             <i class='bx bx-code-alt'></i>

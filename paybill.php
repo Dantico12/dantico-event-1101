@@ -2,14 +2,14 @@
 session_start();
 require_once 'db.php'; // Database connection
 
-// Ensure paybill_number column exists
-$column_check_query = "SHOW COLUMNS FROM events LIKE 'paybill_number'";
+// Ensure paybill column exists
+$column_check_query = "SHOW COLUMNS FROM events LIKE 'phone_paybill'";
 $column_result = $conn->query($column_check_query);
 
 if ($column_result->num_rows == 0) {
-    $alter_table_query = "ALTER TABLE events ADD COLUMN paybill_number VARCHAR(50) NULL";
+    $alter_table_query = "ALTER TABLE events ADD COLUMN phone_paybill VARCHAR(50) NULL";
     if (!$conn->query($alter_table_query)) {
-        die("Failed to add paybill_number column: " . $conn->error);
+        die("Failed to add paybill column: " . $conn->error);
     }
 }
 
@@ -38,7 +38,7 @@ if (!$event_id || !$event_code) {
 }
 
 // Verify event exists and matches the code
-$event_verify_query = "SELECT id, name, event_code FROM events WHERE id = ? AND event_code = ?";
+$event_verify_query = "SELECT id, event_name, event_code FROM events WHERE id = ? AND event_code = ?";
 $stmt = $conn->prepare($event_verify_query);
 $stmt->bind_param('is', $event_id, $event_code);
 $stmt->execute();
@@ -57,14 +57,14 @@ $error_message = '';
 
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // Validate paybill number input
+    // Validate paybill input
     $paybill_number = isset($_POST['paybill_number']) ? trim($_POST['paybill_number']) : '';
 
     if (empty($paybill_number)) {
         $error_message = "Paybill number cannot be empty.";
     } else {
         // Update paybill number for this specific event
-        $update_query = "UPDATE events SET paybill_number = ? WHERE id = ? AND event_code = ?";
+        $update_query = "UPDATE events SET phone_paybill = ? WHERE id = ? AND event_code = ?";
         $stmt = $conn->prepare($update_query);
         $stmt->bind_param('sis', $paybill_number, $event_id, $event_code);
 
@@ -78,12 +78,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // Retrieve current paybill number if exists
-$paybill_query = "SELECT paybill_number FROM events WHERE id = ? AND event_code = ?";
+$paybill_query = "SELECT phone_paybill FROM events WHERE id = ? AND event_code = ?";
 $stmt = $conn->prepare($paybill_query);
 $stmt->bind_param('is', $event_id, $event_code);
 $stmt->execute();
 $paybill_result = $stmt->get_result();
-$current_paybill = $paybill_result->fetch_assoc()['paybill_number'] ?? '';
+$current_paybill = $paybill_result->fetch_assoc()['phone_paybill'] ?? '';
 $stmt->close();
 ?>
 <!DOCTYPE html>
@@ -91,7 +91,7 @@ $stmt->close();
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Paybill Management - <?php echo htmlspecialchars($event_details['name']); ?></title>
+    <title>Phone Number Management - <?php echo htmlspecialchars($event_details['name']); ?></title>
     <link href='https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css' rel='stylesheet'>
     <style>
         * {
@@ -198,7 +198,7 @@ $stmt->close();
             margin: 0 auto;
         }
 
-        .paybill-card {
+        .phone-card {
             background-color: #1e293b;
             border-radius: 0.5rem;
             padding: 2rem;
@@ -265,10 +265,16 @@ $stmt->close();
             margin-bottom: 1rem;
             text-align: center;
         }
+        .paybill-card {
+            background-color: #1e293b;
+            border-radius: 0.5rem;
+            padding: 2rem;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
     </style>
 </head>
 <body>
-    <!-- Sidebar Navigation -->
+   <!-- Sidebar Navigation -->
 <nav class="sidebar">
     <div class="sidebar-header">
         <i class='bx bx-calendar-event' style="color: #0ef; font-size: 24px;"></i>
@@ -287,11 +293,11 @@ $stmt->close();
 
         <!-- Committees Section -->
         <div class="menu-category">
-            <div class="category-title">Paybill</div>
+            <div class="category-title">paybill</div>
             <div class="menu-item">
-                <a href="./apaybill.php<?= $base_url ?>">
+                <a href="./paybill.php<?= $base_url ?>">
                     <i class='bx bx-plus-circle'></i>
-                    <span>Add paybill</span>
+                    <span>Add Paybill</span>
                 </a>
             </div>
             <div class="menu-item">
@@ -352,12 +358,7 @@ $stmt->close();
                     <span>Tasks</span>
                 </a>
             </div>
-            <div class="menu-item">
-                <a href="./reports.php<?= $base_url ?>">
-                    <i class='bx bx-line-chart'></i>
-                    <span>Reports</span>
-                </a>
-            </div>
+            
         </div>
 
         <!-- Other Tools -->
@@ -369,19 +370,14 @@ $stmt->close();
                     <span>Schedule</span>
                 </a>
             </div>
-            <div class="menu-item">
-                <a href="./settings.php<?= $base_url ?>">
-                    <i class='bx bx-cog'></i>
-                    <span>Settings</span>
-                </a>
-            </div>
+          
         </div>
     </div>
 </nav>
 <div class="container">
         <div class="paybill-card">
             <div class="event-info">
-                <h2><?php echo htmlspecialchars($event_details['name']); ?></h2>
+                <h2><?php echo htmlspecialchars($event_details['event_name']); ?></h2>
                 <p>Event Code: <?php echo htmlspecialchars($event_code); ?></p>
             </div>
 

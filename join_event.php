@@ -13,7 +13,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['event_code'])) {
     $event_code = strtoupper(trim($_POST['event_code']));
     
     // Check if event exists
-    if ($stmt = $conn->prepare("SELECT id, name FROM events WHERE event_code = ? AND status = 'active'")) {
+    if ($stmt = $conn->prepare("SELECT id, event_name FROM events WHERE event_code = ? AND status = 'active'")) {
         $stmt->bind_param("s", $event_code);
         if ($stmt->execute()) {
             $result = $stmt->get_result();
@@ -364,7 +364,7 @@ if ($stmt = $conn->prepare($events_query)) {
                         <span class="role-badge role-<?php echo strtolower($event['role']); ?>">
                             <?php echo htmlspecialchars($event['role']); ?>
                         </span>
-                        <h4><?php echo htmlspecialchars($event['name']); ?></h4>
+                        <h4><?php echo htmlspecialchars($event['event_name']); ?></h4>
                         <p>
                             <i class='bx bx-calendar'></i>
                             <?php echo date('M d, Y', strtotime($event['joined_at'])); ?>

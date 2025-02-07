@@ -1,13 +1,151 @@
+<?php
+session_start();
+require 'db.php';
+
+// Redirect if not logged in
+if (!isset($_SESSION['user_id'])) {
+    header("Location: login.php");
+    exit();
+}
+
+// Get event ID from URL
+$event_id = isset($_GET['event_id']) ? (int)$_GET['event_id'] : 0;
+
+// Verify user is admin
+$is_admin = false;
+if ($stmt = $conn->prepare("SELECT role FROM event_members WHERE event_id = ? AND user_id = ? AND role = 'admin'")) {
+    $stmt->bind_param("ii", $event_id, $_SESSION['user_id']);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $is_admin = $result->num_rows > 0;
+    $stmt->close();
+}
+
+if (!$is_admin) {
+    header("Location: dashboard.php");
+    exit();
+}
+
+// Get event details
+$event_query = "SELECT event_name FROM events WHERE id = ?";
+if ($stmt = $conn->prepare($event_query)) {
+    $stmt->bind_param("i", $event_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $event = $result->fetch_assoc();
+    $stmt->close();
+}
+
+// Fetch available members (who aren't already committee members)
+$members_query = "
+    SELECT 
+        u.id,
+        u.username,
+        u.email
+    FROM event_members em
+    JOIN users u ON em.user_id = u.id
+    WHERE em.event_id = ? 
+    AND em.status = 'active'
+    AND em.committee_role IS NULL
+    ORDER BY u.username ASC
+
+";
+
+$available_members = [];
+if ($stmt = $conn->prepare($members_query)) {
+    $stmt->bind_param("i", $event_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    while ($row = $result->fetch_assoc()) {
+        $available_members[] = $row;
+    }
+    $stmt->close();
+}
+
+// Handle form submission
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $member_id = (int)$_POST['member_id'];
+    $committee_role = $_POST['committee_role'];
+
+    // Check if role is already taken
+    $role_check_query = "
+        SELECT COUNT(*) as count 
+        FROM event_members 
+        WHERE event_id = ? 
+        AND committee_role = ? 
+        AND status = 'active'
+    ";
+
+    $role_taken = false;
+    if ($stmt = $conn->prepare($role_check_query)) {
+        $stmt->bind_param("is", $event_id, $committee_role);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $row = $result->fetch_assoc();
+        $role_taken = ($row['count'] > 0);
+        $stmt->close();
+    }
+
+    if ($role_taken && in_array($committee_role, ['chairman', 'secretary', 'treasurer'])) {
+        $_SESSION['error_message'] = "This committee role is already taken.";
+    } else {
+        // Add member to committee
+        if ($stmt = $conn->prepare("UPDATE event_members SET committee_role = ? WHERE event_id = ? AND user_id = ?")) {
+            $stmt->bind_param("sii", $committee_role, $event_id, $member_id);
+            if ($stmt->execute()) {
+                $_SESSION['success_message'] = "Committee member added successfully.";
+                
+            } else {
+                $_SESSION['error_message'] = "Error adding committee member.";
+            }
+            $stmt->close();
+        }
+    }
+}
+
+// Get current committee members
+$committee_query = "
+    SELECT 
+        u.id,
+        u.username,
+        u.email,
+        em.committee_role,
+        em.joined_at
+    FROM event_members em
+    JOIN users u ON em.user_id = u.id
+    WHERE em.event_id = ?
+    AND em.committee_role IS NOT NULL
+    ORDER BY 
+        CASE em.committee_role 
+            WHEN 'chairman' THEN 1
+            WHEN 'secretary' THEN 2
+            WHEN 'treasurer' THEN 3
+            ELSE 4
+        END,
+        u.username
+";
 
 
+$committee_members = [];
+if ($stmt = $conn->prepare($committee_query)) {
+    $stmt->bind_param("i", $event_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    while ($row = $result->fetch_assoc()) {
+        $committee_members[] = $row;
+    }
+    $stmt->close();
+}
 
+$current_page = basename($_SERVER['PHP_SELF']);
+?>
 
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Add Committee - Dantico Events</title>
+    <title>Add Committee - <?php echo htmlspecialchars($event['event_name']); ?></title>
     <link href='https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css' rel='stylesheet'>
     <style>
         * {
@@ -30,122 +168,56 @@
         }
 
         .sidebar {
-            position: fixed;
-            top: 0;
-            left: 0;
-            height: 100%;
-            width: var(--sidebar-width);
-            background: rgba(8, 27, 41, 0.9);
+            width: 260px;
+            background: rgba(0, 238, 255, 0.1);
             border-right: 2px solid #0ef;
-            transition: all 0.5s ease;
-            z-index: 100;
-        }
-
-        .sidebar.collapse {
-            width: var(--collapsed-width);
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            position: fixed;
+            height: 100vh;
         }
 
         .sidebar-header {
-            height: var(--header-height);
-            display: flex;
-            align-items: center;
-            padding: 0 15px;
-            border-bottom: 2px solid #0ef;
+            padding: 20px 0;
+            text-align: center;
+            border-bottom: 1px solid #0ef;
+            margin-bottom: 20px;
         }
 
         .sidebar-header h2 {
-            color: #fff;
+            color: #0ef;
             font-size: 20px;
-            margin-left: 15px;
-            white-space: nowrap;
-            transition: all 0.5s ease;
+            margin-bottom: 10px;
         }
 
-        .sidebar.collapse .sidebar-header h2 {
-            opacity: 0;
+        .nav-links {
+            list-style: none;
         }
 
-        .sidebar-menu {
-            padding: 10px 0;
-            height: calc(100% - var(--header-height));
-            overflow-y: auto;
+        .nav-links li {
+            margin-bottom: 10px;
         }
 
-        .menu-category {
-            margin: 10px 0;
-        }
-
-        .category-title {
-            color: #0ef;
-            font-size: 12px;
-            text-transform: uppercase;
-            padding: 10px 20px;
-            letter-spacing: 1px;
-            opacity: 0.7;
-        }
-
-        .sidebar.collapse .category-title {
-            opacity: 0;
-        }
-
-        .menu-item {
-            padding: 12px 20px 12px 30px;
+        .nav-links a {
             display: flex;
             align-items: center;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            position: relative;
-        }
-
-        .menu-item a {
+            padding: 12px 15px;
             text-decoration: none;
-            color: inherit;
-            display: flex;
-            align-items: center;
-            width: 100%;
-        }
-
-        .menu-item:hover {
-            background: rgba(0, 238, 255, 0.1);
-        }
-
-        .menu-item.active {
-            background: rgba(0, 238, 255, 0.15);
-        }
-
-        .menu-item i {
-            font-size: 24px;
-            min-width: 40px;
-            color: #0ef;
-            transition: all 0.3s ease;
-        }
-
-        .menu-item span {
             color: #fff;
-            white-space: nowrap;
+            border-radius: 8px;
             transition: all 0.3s ease;
-            margin-left: 10px;
+            gap: 10px;
         }
 
-        .sidebar.collapse .menu-item span {
-            opacity: 0;
+        .nav-links a:hover {
+            background: rgba(0, 238, 255, 0.1);
+            color: #0ef;
         }
 
-        .menu-item::after {
-            content: '';
-            position: absolute;
-            left: 0;
-            top: 0;
-            width: 2px;
-            height: 100%;
+        .nav-links a.active {
             background: #0ef;
-            opacity: 0;
-            transition: all 0.3s ease;
-        }
-
-        .menu-item:hover::after,
-        .menu-item.active::after {
-            opacity: 1;
+            color: #081b29;
         }
 
         .main-content {
@@ -291,121 +363,74 @@
             padding-bottom: 10px;
             text-align: center;
         }
+         
+        .committee-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .committee-table th,
+        .committee-table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid rgba(0, 238, 255, 0.2);
+            color: #fff;
+        }
+
+        .committee-table th {
+            background: rgba(0, 238, 255, 0.2);
+            color: #0ef;
+        }
+
+        .role-badge {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            text-transform: capitalize;
+        }
+
+        .role-chairman { background: rgba(0, 255, 0, 0.1); color: #0f0; }
+        .role-secretary { background: rgba(0, 191, 255, 0.1); color: #0bf; }
+        .role-treasurer { background: rgba(255, 165, 0, 0.1); color: #fa0; }
+        .role-member { background: rgba(255, 255, 255, 0.1); color: #fff; }
     </style>
 </head>
 <body>
-    <!-- Sidebar -->
-    <nav class="sidebar">
+   <!-- Sidebar -->
+   <div class="sidebar">
         <div class="sidebar-header">
-            <i class='bx bx-calendar-event' style="color: #0ef; font-size: 24px;"></i>
-            <h2>Dantico Events</h2>
+            <h2><?php echo htmlspecialchars($event['event_name']); ?></h2>
+            <p>Management Panel</p>
         </div>
-        <div class="sidebar-menu">
-            <!-- Dashboard -->
-            <div class="menu-category">
-                <div class="menu-item">
-                    <a href="./dashboard.php">
-                        <i class='bx bx-home-alt'></i>
-                        <span>Dashboard</span>
-                    </a>
-                </div>
-            </div>
-
-            <!-- Committees Section -->
-            <div class="menu-category">
-                <div class="category-title">Committees</div>
-                <div class="menu-item active">
-                    <a href="./add-committee.html">
-                        <i class='bx bx-plus-circle'></i>
-                        <span>Add Committee</span>
-                    </a>
-                </div>
-                <div class="menu-item">
-                    <a href="./committee-list.html">
-                        <i class='bx bx-group'></i>
-                        <span>Committee List</span>
-                    </a>
-                </div>
-            </div>
-
-            <!-- Communication Section -->
-            <div class="menu-category">
-                <div class="category-title">Communication</div>
-                <div class="menu-item">
-                    <a href="./chat.html">
-                        <i class='bx bx-message-rounded-dots'></i>
-                        <span>Chat System</span>
-                    </a>
-                </div>
-                <div class="menu-item">
-                    <a href="./video-conference.html">
-                        <i class='bx bx-video'></i>
-                        <span>Video Conference</span>
-                    </a>
-                </div>
-            </div>
-
-            <!-- Contributions Section -->
-            <div class="menu-category">
-                <div class="category-title">Contributions</div>
-                <div class="menu-item">
-                    <a href="./make_contribution.html">
-                        <i class='bx bx-plus-circle'></i>
-                        <span>Make Contribution</span>
-                    </a>
-                </div>
-                <div class="menu-item">
-                    <a href="./contributions.html">
-                        <i class='bx bx-money'></i>
-                        <span>Contributions</span>
-                    </a>
-                </div>
-            </div>
-
-            <!-- Reviews Section -->
-            <div class="menu-category">
-                <div class="category-title">Reviews</div>
-                <div class="menu-item">
-                    <a href="./minutes.html">
-                        <i class='bx bxs-timer'></i>
-                        <span>Minutes</span>
-                    </a>
-                </div>
-                <div class="menu-item">
-                    <a href="./tasks.html">
-                        <i class='bx bx-task' ></i>
-                        <span>Tasks</span>
-                    </a>
-                </div>
-            </div>
-
-                <div class="menu-item">
-                    <a href="./reports.html">
-                        <i class='bx bx-line-chart'></i>
-                        <span>Reports</span>
-                    </a>
-                </div>
-            </div>
-
-
-            <!-- Other Tools -->
-            <div class="menu-category">
-                <div class="category-title">Tools</div>
-                <div class="menu-item">
-                    <a href="./schedule.html">
-                        <i class='bx bx-calendar'></i>
-                        <span>Schedule</span>
-                    </a>
-                </div>
-                <div class="menu-item">
-                    <a href="./settings.html">
-                        <i class='bx bx-cog'></i>
-                        <span>Settings</span>
-                    </a>
-                </div>
-            </div>
+        <ul class="nav-links">
+            <li>
+                <a href="manage_event.php?event_id=<?php echo $event_id; ?>" 
+                   class="<?php echo $current_page === 'manage_event.php' ? 'active' : ''; ?>">
+                    <i class='bx bx-grid-alt'></i> Dashboard
+                </a>
+            </li>
+            <li>
+                <a href="manage_members.php?event_id=<?php echo $event_id; ?>"
+                   class="<?php echo $current_page === 'manage_members.php' ? 'active' : ''; ?>">
+                    <i class='bx bx-user'></i> Members
+                </a>
+            </li>
+            <li>
+                <a href="add_committee.php?event_id=<?php echo $event_id; ?>"
+                   class="<?php echo $current_page === 'add_committee.php' ? 'active' : ''; ?>">
+                    <i class='bx bx-user-plus'></i> Committee
+                </a>
+            </li>
+         
+        </ul>
+        <div style="margin-top: auto; padding: 20px 0;">
+            <a href="dashboard.php" class="btn danger" style="width: 100%;">
+                <i class='bx bx-arrow-back'></i> Exit Management
+            </a>
         </div>
-    </nav>
+    </div>
 
     <!-- Main Content -->
     <div class="main-content">
@@ -413,7 +438,7 @@
             <button class="toggle-btn">
                 <i class='bx bx-menu'></i>
             </button>
-            <h2 class="header-title">Add Committee</h2>
+            <h2 class="header-title">Committee Management</h2>
             <div class="header-actions">
                 <i class='bx bx-search'></i>
                 <i class='bx bx-bell'></i>
@@ -421,31 +446,80 @@
             </div>
         </div>
 
-        <div class="content-section">
-            <div class="form-container">
-                <h3 class="section-title">Add Committee Member</h3>
-                <form id="committeeForm">
-                    <div class="form-group">
-                        <label for="committeeName">Committee Name</label>
-                        <input type="text" id="committeeName" required placeholder="Enter committee name">
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="role">Role</label>
-                        <select id="role" required>
-                            <option value="">Select role</option>
-                            <option value="chairman">Chairman</option>
-                            <option value="secretary">Secretary</option>
-                            <option value="treasurer">Treasurer</option>
-                        </select>
-                    </div>
-
-                    <div class="btn-container">
-                        <button type="button" class="btn btn-secondary">Cancel</button>
-                        <button type="submit" class="btn btn-primary">Save</button>
-                    </div>
-                </form>
+        <?php if (isset($_SESSION['success_message'])): ?>
+            <div class="message success-message">
+                <?php echo htmlspecialchars($_SESSION['success_message']); 
+                      unset($_SESSION['success_message']); ?>
             </div>
+        <?php endif; ?>
+
+        <?php if (isset($_SESSION['error_message'])): ?>
+            <div class="message error-message">
+                <?php echo htmlspecialchars($_SESSION['error_message']); 
+                      unset($_SESSION['error_message']); ?>
+            </div>
+        <?php endif; ?>
+
+        <div class="content-section">
+            <h3 class="section-title">Add New Committee Member</h3>
+            <form method="POST" class="form-container">
+                <div class="form-group">
+                    <label for="member_id">Select Member</label>
+                    <select id="member_id" name="member_id" required>
+                        <option value="">Choose a member</option>
+                        <?php foreach ($available_members as $member): ?>
+                            <option value="<?php echo $member['id']; ?>">
+                                <?php echo htmlspecialchars($member['username'] . ' (' . $member['email'] . ')'); ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="committee_role">Committee Role</label>
+                    <select id="committee_role" name="committee_role" required>
+                        <option value="">Select role</option>
+                        <option value="chairman">Chairman</option>
+                        <option value="secretary">Secretary</option>
+                        <option value="treasurer">Treasurer</option>
+                        <option value="member">Committee Member</option>
+                    </select>
+                </div>
+
+                <div class="btn-container">
+                    <button type="button" class="btn btn-secondary" onclick="window.history.back()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Add to Committee</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="content-section">
+            <h3 class="section-title">Current Committee Members</h3>
+            <table class="committee-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Role</th>
+                        <th>Email</th>
+                        <th>Joined Date</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($committee_members as $member): ?>
+                    <tr>
+                        <td><?php echo htmlspecialchars($member['username']); ?></td>
+                        <td>
+                            <span class="role-badge role-<?php echo htmlspecialchars($member['committee_role']); ?>">
+                                <?php echo ucfirst(htmlspecialchars($member['committee_role'])); ?>
+                            </span>
+                        </td>
+                        <td><?php echo htmlspecialchars($member['email']); ?></td>
+                 
+                        <td><?php echo date('M d, Y', strtotime($member['joined_at'])); ?></td>
+                    </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
         </div>
     </div>
 
@@ -458,29 +532,6 @@
         toggleBtn.addEventListener('click', () => {
             sidebar.classList.toggle('collapse');
             mainContent.classList.toggle('expand');
-        });
-
-        // Handle menu item clicks
-        const menuItems = document.querySelectorAll('.menu-item');
-        menuItems.forEach(item => {
-            item.addEventListener('click', () => {
-                menuItems.forEach(i => i.classList.remove('active'));
-                item.classList.add('active');
-                const spanText = item.querySelector('span').textContent;
-                document.querySelector('.header-title').textContent = spanText;
-            });
-        });
-
-        // Form submission handler
-        document.getElementById('committeeForm').addEventListener('submit', function(e) {
-            e.preventDefault();
-            const formData = {
-                committeeName: document.getElementById('committeeName').value,
-                role: document.getElementById('role').value
-            };
-            console.log('Form submitted:', formData);
-            alert('Committee member added successfully!');
-            this.reset();
         });
     </script>
 </body>

@@ -54,7 +54,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } while ($result->num_rows > 0);
             
             // Insert event with simplified schema
-            $sql = "INSERT INTO events (name, event_code, status) VALUES (?, ?, 'active')";
+            $sql = "INSERT INTO events (event_name, event_code, status) VALUES (?, ?, 'active')";
             $stmt = $conn->prepare($sql);
             
             if (!$stmt) {
@@ -280,11 +280,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <label for="max_participants">Max Participants*</label>
                 </div>
 
-                <div class="input-box">
-                    <textarea id="description" name="description" rows="4"></textarea>
-                    <label for="description">Description</label>
-                </div>
-
+                
                 <div class="form-actions">
                     <button type="submit" class="create-btn">Create Event</button>
                     <a href="dashboard.php" class="cancel-btn">Cancel</a>

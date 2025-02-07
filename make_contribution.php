@@ -1,4 +1,19 @@
 <?php
+
+session_start();
+
+// Function to generate base URL with event context
+function getEventContextURL() {
+    $base_url = '';
+    if (isset($_SESSION['current_event_id']) && isset($_SESSION['current_event_code'])) {
+        $base_url = '?event_id=' . urlencode($_SESSION['current_event_id']) . 
+                    '&event_code=' . urlencode($_SESSION['current_event_code']);
+    }
+    return $base_url;
+}
+
+// Get the event context URL to be used across navigation
+$base_url = getEventContextURL();
 class MpesaGateway {
     private $consumer_key;
     private $consumer_secret;
@@ -7,6 +22,8 @@ class MpesaGateway {
     private $passkey;
     private $environment;
     private $conn;
+
+    
 
     public function __construct($db_connection) {
         // Use credentials from the second implementation
@@ -34,21 +51,20 @@ class MpesaGateway {
         $result = json_decode($response, true);
         return $result['access_token'] ?? null;
     }
-
     public function initiateSTKPush($phone_number, $amount, $event_id) {
-        // Sanitize phone number (similar to second implementation)
+        // Sanitize phone number
         $phone_number = $this->sanitizePhoneNumber($phone_number);
-
+    
         $access_token = $this->generateAccessToken();
         if (!$access_token) {
             return ['error' => 'Failed to generate access token'];
         }
-
+    
         $timestamp = date('YmdHis');
         $business_short_code = '174379';
         $password = base64_encode($business_short_code . $this->passkey . $timestamp);
         $order_ref = 'ORDER' . $timestamp . rand(1000, 9999);
-
+    
         $curl_post_data = [
             'BusinessShortCode' => $business_short_code,
             'Password' => $password,
@@ -62,9 +78,9 @@ class MpesaGateway {
             'AccountReference' => $order_ref,
             'TransactionDesc' => "Contribution for Event ID $event_id"
         ];
-
+    
         $url = 'https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest';
-
+    
         $curl = curl_init();
         curl_setopt_array($curl, [
             CURLOPT_URL => $url,
@@ -76,16 +92,21 @@ class MpesaGateway {
             CURLOPT_POST => true,
             CURLOPT_POSTFIELDS => json_encode($curl_post_data)
         ]);
-
+    
         $response = curl_exec($curl);
         curl_close($curl);
-
+    
         $result = json_decode($response, true);
         
-        // Log the payment request and insert transaction
+        // Only log the request for now - don't insert into database yet
         $this->logPaymentRequest($order_ref, $phone_number, $amount, $event_id, $result);
-        $this->insertTransaction($order_ref, $phone_number, $amount, $event_id, json_encode($result));
-
+        
+        // Add the order_ref to the result so we can use it later
+        $result['order_ref'] = $order_ref;
+        $result['phone_number'] = $phone_number;
+        $result['amount'] = $amount;
+        $result['event_id'] = $event_id;
+        
         return $result;
     }
 
@@ -115,7 +136,7 @@ class MpesaGateway {
 
     private function insertTransaction($orderRef, $phone, $amount, $event_id, $mpesaResponse) {
         $status = 'pending';
-        $stmt = $this->conn->prepare("INSERT INTO contributions (order_ref, event_id, phone_number, amount, mpesa_response, status, contribution_date) VALUES (?, ?, ?, ?, ?, ?, NOW())");
+        $stmt = $this->conn->prepare("INSERT INTO contributions (order_ref, event_id, phone_number, amount, mpesa_response, transaction_status, contribution_date) VALUES (?, ?, ?, ?, ?, ?, NOW())");
         
         if ($stmt) {
             $stmt->bind_param("sisdsb", $orderRef, $event_id, $phone, $amount, $mpesaResponse, $status);
@@ -477,23 +498,6 @@ class MpesaGateway {
     </style>
 </head>
 <body>
-<?php
-// Ensure this PHP block is at the top of your sidebar include or in a separate navigation.php file
-session_start();
-
-// Function to generate base URL with event context
-function getEventContextURL() {
-    $base_url = '';
-    if (isset($_SESSION['current_event_id']) && isset($_SESSION['current_event_code'])) {
-        $base_url = '?event_id=' . urlencode($_SESSION['current_event_id']) . 
-                    '&event_code=' . urlencode($_SESSION['current_event_code']);
-    }
-    return $base_url;
-}
-
-// Get the event context URL to be used across navigation
-$base_url = getEventContextURL();
-?>
 
 <!-- Sidebar Navigation -->
 <nav class="sidebar">
@@ -514,13 +518,7 @@ $base_url = getEventContextURL();
 
         <!-- Committees Section -->
         <div class="menu-category">
-            <div class="category-title">Paybill</div>
-            <div class="menu-item">
-                <a href="./paybill.php<?= $base_url ?>">
-                    <i class='bx bx-plus-circle'></i>
-                    <span>Add Paybill</span>
-                </a>
-            </div>
+           
             <div class="menu-item">
                 <a href="./committee-list.php<?= $base_url ?>">
                     <i class='bx bx-group'></i>
@@ -579,12 +577,7 @@ $base_url = getEventContextURL();
                     <span>Tasks</span>
                 </a>
             </div>
-            <div class="menu-item">
-                <a href="./reports.php<?= $base_url ?>">
-                    <i class='bx bx-line-chart'></i>
-                    <span>Reports</span>
-                </a>
-            </div>
+            
         </div>
 
         <!-- Other Tools -->
@@ -596,12 +589,7 @@ $base_url = getEventContextURL();
                     <span>Schedule</span>
                 </a>
             </div>
-            <div class="menu-item">
-                <a href="./settings.php<?= $base_url ?>">
-                    <i class='bx bx-cog'></i>
-                    <span>Settings</span>
-                </a>
-            </div>
+          
         </div>
     </div>
 </nav>
@@ -675,50 +663,70 @@ $base_url = getEventContextURL();
         </form>
     </div>
 </div>
-
 <script>
-  document.getElementById('contributionForm').addEventListener('submit', function(e) {
-    e.preventDefault();
-    
-    const phoneNumber = document.getElementById('phoneNumber').value;
-    const amount = document.getElementById('amount').value;
-    const eventId = <?php echo json_encode($_SESSION['current_event_id'] ?? 0); ?>;
-    const eventCode = <?php echo json_encode($_SESSION['current_event_code'] ?? ''); ?>;
+    document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('contributionForm');
+    const successMessage = document.querySelector('.success-message');
 
-    const formData = new FormData();
-    formData.append('phone_number', phoneNumber);
-    formData.append('amount', amount);
+    form.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const phoneNumber = document.getElementById('phoneNumber').value;
+        const amount = document.getElementById('amount').value;
+        const submitButton = this.querySelector('button[type="submit"]');
+        
+        // Disable form while processing
+        submitButton.disabled = true;
+        submitButton.innerHTML = '<i class="bx bx-loader-alt bx-spin"></i> Processing...';
 
-    fetch('process_payment.php', {
-        method: 'POST',
-        body: formData,
-        headers: {
-            'X-Requested-With': 'XMLHttpRequest'
+        try {
+            const formData = new FormData();
+            formData.append('phone_number', phoneNumber);
+            formData.append('amount', amount);
+
+            const response = await fetch('process_payment.php', {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest'
+                }
+            });
+
+            const text = await response.text();
+            console.log('Raw response:', text);
+            
+            let data;
+            try {
+                data = JSON.parse(text);
+            } catch (e) {
+                console.error('JSON Parse Error:', e);
+                throw new Error('Server returned invalid JSON');
+            }
+
+            console.log('Parsed response:', data);
+            
+            if (data.status === 'success' && data.data?.CheckoutRequestID) {
+                successMessage.innerHTML = `
+                    <i class='bx bx-check-circle' style="color: #0ef; font-size: 20px;"></i>
+                    Please check your phone for the M-Pesa prompt
+                `;
+                successMessage.classList.add('show');
+                form.reset();
+                
+                // Hide success message after 10 seconds
+                setTimeout(() => {
+                    successMessage.classList.remove('show');
+                }, 10000);
+            } else {
+                throw new Error(data.message || 'Payment processing failed');
+            }
+        } catch (error) {
+            console.error('Error details:', error);
+            alert('Payment processing failed: ' + error.message);
+        } finally {
+            submitButton.disabled = false;
+            submitButton.innerHTML = '<i class="bx bx-check"></i> Send M-Pesa Request';
         }
-    })
-    .then(response => {
-        if (!response.ok) {
-            throw new Error('Network response was not ok');
-        }
-        return response.json();
-    })
-    .then(data => {
-        console.log(data);  // Debug log
-        const successMessage = document.querySelector('.success-message');
-        if (data.MerchantRequestID) {
-            successMessage.classList.add('show');
-            setTimeout(() => {
-                successMessage.classList.remove('show');
-                this.reset();
-            }, 3000);
-        } else {
-            console.error('Payment initiation failed', data);
-            alert(data.error || 'Payment failed');
-        }
-    })
-    .catch(error => {
-        console.error('Error:', error);
-        alert('An error occurred during payment processing');
     });
 });
 </script>

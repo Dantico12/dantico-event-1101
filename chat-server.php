@@ -1,6 +1,5 @@
 <?php
 require 'vendor/autoload.php';
-
 use Ratchet\MessageComponentInterface;
 use Ratchet\ConnectionInterface;
 use Ratchet\Server\IoServer;
@@ -112,7 +111,7 @@ class ChatServer implements MessageComponentInterface {
                     $clientMessageId = $data['client_message_id'] ?? null;
                     
                     $stmt->bind_param(
-                        "iissssss", 
+                        "iisssss",  // Changed to 7 parameter types to match variables
                         $eventId, 
                         $senderId, 
                         $message, 
@@ -121,7 +120,6 @@ class ChatServer implements MessageComponentInterface {
                         $readStatus, 
                         $clientMessageId
                     );
-                    
                     if (!$stmt->execute()) {
                         throw new Exception('Failed to save message: ' . $stmt->error);
                     }
