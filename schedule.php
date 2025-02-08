@@ -771,156 +771,14 @@ $meetings = getMeetings($conn, $current_event_id);
     </div>
 
     <script>
-document.addEventListener('DOMContentLoaded', function() {
-    function updateMeetingStatusesAndButtons() {
-        const meetingRows = document.querySelectorAll('.meeting-row');
-        
-        meetingRows.forEach(row => {
-            // Get meeting details from table cells
-            const dateStr = row.children[1].textContent.trim();
-            const timeRange = row.children[2].textContent.trim();
-            const actionCell = row.querySelector('.meeting-action');
-            
-            // Parse time range
-            const [startTimeStr, endTimeStr] = timeRange.split(' - ');
-            
-            // Create date objects using proper parsing
-            const startDateTime = parseDateTime(dateStr, startTimeStr);
-            const endDateTime = parseDateTime(dateStr, endTimeStr);
-            const now = new Date();
+        document.addEventListener('DOMContentLoaded', function() {
+    // Initial update
+    updateMeetingStatusesAndButtons();
+    
+    // Update every second
+    setInterval(updateMeetingStatusesAndButtons, 1000);
 
-            // Get UI elements
-            const statusCell = row.querySelector('.status-text');
-            const statusIndicator = row.querySelector('.status-indicator');
-            const joinBtn = actionCell.querySelector('.join-btn');
-            const countdownSpan = actionCell.querySelector('.countdown');
-
-            // Get timestamps and calculate time differences
-            const currentTime = now.getTime();
-            const startTime = startDateTime.getTime();
-            const endTime = endDateTime.getTime();
-            const timeToStart = startTime - currentTime;
-            const timeToEnd = endTime - currentTime;
-
-            const meetingUrl = joinBtn ? joinBtn.dataset.meetingUrl : '';
-
-            // Update meeting status based on time
-            if (timeToStart > 0) {
-                // Future meeting
-                handleFutureMeeting(joinBtn, countdownSpan, timeToStart);
-                updateStatus(statusCell, statusIndicator, 'scheduled', 'Scheduled');
-            } 
-            else if (timeToStart <= 0 && timeToEnd > 0) {
-                // In-progress meeting
-                handleInProgressMeeting(actionCell, meetingUrl);
-                updateStatus(statusCell, statusIndicator, 'in-progress', 'In Progress');
-            } 
-            else {
-                // Ended meeting
-                handleEndedMeeting(actionCell, dateStr);
-                updateStatus(statusCell, statusIndicator, 'ended', 'Ended');
-            }
-        });
-    }
-
-    function handleFutureMeeting(joinBtn, countdownSpan, timeToStart) {
-        if (joinBtn) {
-            joinBtn.classList.add('disabled');
-            joinBtn.textContent = 'Join Meeting';
-            if (countdownSpan) {
-                updateCountdown(timeToStart, countdownSpan);
-                countdownSpan.style.display = 'block';
-            }
-        }
-    }
-
-    function handleInProgressMeeting(actionCell, meetingUrl) {
-        if (actionCell) {
-            actionCell.innerHTML = `
-                <a href="video-conference.php${meetingUrl}" 
-                   class="join-btn"
-                   onclick="return confirmJoinMeeting(event)">
-                    Join Now
-                </a>
-            `;
-        }
-    }
-
-    function handleEndedMeeting(actionCell, dateStr) {
-        const formattedDate = formatDate(dateStr);
-        actionCell.innerHTML = `<span class="ended-status">Meeting Ended on ${formattedDate}</span>`;
-    }
-
-    function parseDateTime(dateStr, timeStr) {
-        const [month, day, year] = dateStr.match(/([A-Za-z]+)\s+(\d+),\s+(\d+)/).slice(1);
-        const [time, period] = timeStr.match(/(\d+:\d+)\s+(AM|PM)/).slice(1);
-        const [hours, minutes] = time.split(':');
-        
-        const date = new Date();
-        date.setFullYear(parseInt(year));
-        date.setMonth(getMonthNumber(month));
-        date.setDate(parseInt(day));
-        
-        let hour = parseInt(hours);
-        if (period === 'PM' && hour !== 12) hour += 12;
-        if (period === 'AM' && hour === 12) hour = 0;
-        
-        date.setHours(hour, parseInt(minutes), 0, 0);
-        return date;
-    }
-
-    function getMonthNumber(monthStr) {
-        const months = {
-            'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
-            'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
-        };
-        return months[monthStr.substring(0, 3)];
-    }
-
-    function updateCountdown(timeLeft, countdownElement) {
-        if (timeLeft <= 0) {
-            location.reload();
-            return;
-        }
-
-        const days = Math.floor(timeLeft / (1000 * 60 * 60 * 24));
-        const hours = Math.floor((timeLeft % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-        const minutes = Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60));
-        const seconds = Math.floor((timeLeft % (1000 * 60)) / 1000);
-
-        let countdownText = 'Starting in: ';
-        
-        // Smart display of time units
-        if (days > 0) {
-            countdownText += `${days}d ${hours}h ${minutes}m ${seconds}s`;
-        } else if (hours > 0) {
-            countdownText += `${hours}h ${minutes}m ${seconds}s`;
-        } else if (minutes > 0) {
-            countdownText += `${minutes}m ${seconds}s`;
-        } else {
-            countdownText += `${seconds}s`;
-        }
-        
-        countdownElement.textContent = countdownText;
-    }
-
-    function formatDate(dateStr) {
-        const date = new Date(dateStr);
-        return date.toLocaleDateString('en-US', {
-            month: 'short',
-            day: '2-digit',
-            year: 'numeric'
-        });
-    }
-
-    function updateStatus(statusCell, statusIndicator, className, text) {
-        if (statusCell && statusIndicator) {
-            statusCell.textContent = text;
-            statusIndicator.closest('div').className = `status-${className}-status`;
-        }
-    }
-
-    // Meeting join confirmation
+    // Add confirmation for joining meetings
     window.confirmJoinMeeting = function(event) {
         event.preventDefault();
         if (confirm('Are you sure you want to join this meeting?')) {
@@ -928,13 +786,158 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         return false;
     };
-
-    // Update timer
-    setInterval(updateMeetingStatusesAndButtons, 1000);
-
-    // Initial state
-    updateMeetingStatusesAndButtons();
 });
+
+function updateMeetingStatusesAndButtons() {
+    const meetingRows = document.querySelectorAll('.meeting-row');
+    
+    meetingRows.forEach(row => {
+        try {
+            const dateStr = row.children[1].textContent.trim();
+            const timeRange = row.children[2].textContent.trim();
+            const actionCell = row.querySelector('.meeting-action');
+            
+            // Parse time range
+            const [startTimeStr, endTimeStr] = timeRange.split(' - ').map(t => t.trim());
+            
+            // Create date objects
+            const startDateTime = parseDateTime(dateStr, startTimeStr);
+            const endDateTime = parseDateTime(dateStr, endTimeStr);
+            const now = new Date();
+
+            // Get time differences in milliseconds
+            const timeToStart = startDateTime.getTime() - now.getTime();
+            const timeToEnd = endDateTime.getTime() - now.getTime();
+
+            // Get UI elements
+            const statusCell = row.querySelector('.status-text');
+            const statusIndicator = row.querySelector('.status-indicator');
+            const joinBtn = actionCell.querySelector('.join-btn');
+            const countdownSpan = actionCell.querySelector('.countdown');
+            const meetingUrl = joinBtn ? joinBtn.dataset.meetingUrl : '';
+
+            // Update meeting status based on time differences
+            if (timeToStart > 0) {
+                // Future meeting
+                handleFutureMeeting(joinBtn, countdownSpan, timeToStart);
+                updateStatus(statusCell, statusIndicator, 'scheduled', 'Scheduled');
+            } 
+            else if (timeToEnd > 0) {
+                // In-progress meeting
+                handleInProgressMeeting(actionCell, meetingUrl);
+                updateStatus(statusCell, statusIndicator, 'in-progress', 'In Progress');
+            } 
+            else {
+                // Ended meeting
+                handleEndedMeeting(actionCell, dateStr, endDateTime);
+                updateStatus(statusCell, statusIndicator, 'ended', 'Ended');
+            }
+        } catch (error) {
+            console.error('Error processing meeting row:', error);
+        }
+    });
+}
+
+function parseDateTime(dateStr, timeStr) {
+    const dateMatch = dateStr.match(/([A-Za-z]+)\s+(\d+),\s+(\d{4})/);
+    const timeMatch = timeStr.match(/(\d+):(\d+)\s+(AM|PM)/i);
+    
+    if (!dateMatch || !timeMatch) {
+        throw new Error(`Invalid date/time format: ${dateStr} ${timeStr}`);
+    }
+    
+    const [_, month, day, year] = dateMatch;
+    const [__, hours, minutes, period] = timeMatch;
+    
+    const date = new Date();
+    date.setFullYear(parseInt(year));
+    date.setMonth(getMonthNumber(month));
+    date.setDate(parseInt(day));
+    
+    let hour = parseInt(hours);
+    if (period.toUpperCase() === 'PM' && hour !== 12) {
+        hour += 12;
+    } else if (period.toUpperCase() === 'AM' && hour === 12) {
+        hour = 0;
+    }
+    
+    date.setHours(hour, parseInt(minutes), 0, 0);
+    return date;
+}
+
+function getMonthNumber(monthStr) {
+    const months = {
+        'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
+        'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
+    };
+    return months[monthStr.substring(0, 3)];
+}
+
+function handleFutureMeeting(joinBtn, countdownSpan, timeToStart) {
+    if (joinBtn) {
+        joinBtn.classList.add('disabled');
+        joinBtn.textContent = 'Join Meeting';
+        if (countdownSpan) {
+            updateCountdown(timeToStart, countdownSpan);
+            countdownSpan.style.display = 'block';
+        }
+    }
+}
+
+function handleInProgressMeeting(actionCell, meetingUrl) {
+    actionCell.innerHTML = `
+        <a href="video-conference.php${meetingUrl}" 
+           class="join-btn"
+           onclick="return confirmJoinMeeting(event)">
+            Join Now
+        </a>
+    `;
+}
+
+function handleEndedMeeting(actionCell, dateStr, endDateTime) {
+    const formattedDateTime = endDateTime.toLocaleString('en-US', {
+        month: 'short',
+        day: '2-digit',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+    });
+    actionCell.innerHTML = `<span class="ended-status">Meeting Ended on ${formattedDateTime}</span>`;
+}
+
+function updateStatus(statusCell, statusIndicator, className, text) {
+    if (statusCell && statusIndicator) {
+        statusCell.textContent = text;
+        const parentDiv = statusIndicator.closest('div');
+        if (parentDiv) {
+            parentDiv.className = `status-${className}-status`;
+        }
+    }
+}
+
+function updateCountdown(timeLeft, countdownElement) {
+    if (timeLeft <= 0) {
+        location.reload();
+        return;
+    }
+
+    const days = Math.floor(timeLeft / (1000 * 60 * 60 * 24));
+    const hours = Math.floor((timeLeft % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    const minutes = Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60));
+    const seconds = Math.floor((timeLeft % (1000 * 60)) / 1000);
+
+    let countdownText = 'Starting in: ';
+    const timeUnits = [];
+
+    if (days > 0) timeUnits.push(`${days}d`);
+    if (hours > 0 || days > 0) timeUnits.push(`${hours}h`);
+    if (minutes > 0 || hours > 0 || days > 0) timeUnits.push(`${minutes}m`);
+    timeUnits.push(`${seconds}s`);
+
+    countdownText += timeUnits.join(' ');
+    countdownElement.textContent = countdownText;
+}
 </script>
 </body>
 </html>

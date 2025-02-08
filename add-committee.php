@@ -423,6 +423,12 @@ $current_page = basename($_SERVER['PHP_SELF']);
                     <i class='bx bx-user-plus'></i> Committee
                 </a>
             </li>
+            <li>
+                <a href="manage-meetings.php?event_id=<?php echo $event_id; ?>"
+                   class="<?php echo $current_page === 'manage-meetings.php' ? 'active' : ''; ?>">
+                    <i class='bx bx-user-plus'></i> Committee
+                </a>
+            </li>
          
         </ul>
         <div style="margin-top: auto; padding: 20px 0;">

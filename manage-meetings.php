@@ -26,17 +26,49 @@ if (!$is_admin) {
     exit();
 }
 
-// Handle member removal
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['remove_member'])) {
-    $member_id = (int)$_POST['member_id'];
-    if ($stmt = $conn->prepare("UPDATE event_members SET status = 'removed' WHERE event_id = ? AND user_id = ?")) {
-        $stmt->bind_param("ii", $event_id, $member_id);
+// Handle meeting deletion with transaction
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_meeting'])) {
+    $meeting_id = (int)$_POST['meeting_id'];
+    
+    // Start transaction
+    $conn->begin_transaction();
+    
+    try {
+        // First delete related tasks
+        $delete_tasks = $conn->prepare("DELETE FROM tasks WHERE meeting_id = ?");
+        $delete_tasks->bind_param("i", $meeting_id);
+        $delete_tasks->execute();
+        
+        // Then delete the meeting
+        $delete_meeting = $conn->prepare("DELETE FROM meetings WHERE meeting_id = ? AND event_id = ?");
+        $delete_meeting->bind_param("ii", $meeting_id, $event_id);
+        $delete_meeting->execute();
+        
+        // If we get here, commit the transaction
+        $conn->commit();
+        $_SESSION['success_message'] = "Meeting and related tasks deleted successfully.";
+        
+    } catch (Exception $e) {
+        // If anything goes wrong, roll back the transaction
+        $conn->rollback();
+        $_SESSION['error_message'] = "Error deleting meeting: " . $e->getMessage();
+    }
+    
+    header("Location: manage-meetings.php?event_id=" . $event_id);
+    exit();
+}
+
+// Handle ending meeting
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['end_meeting'])) {
+    $meeting_id = (int)$_POST['meeting_id'];
+    if ($stmt = $conn->prepare("UPDATE meetings SET status = 'Ended' WHERE meeting_id = ? AND event_id = ?")) {
+        $stmt->bind_param("ii", $meeting_id, $event_id);
         if ($stmt->execute()) {
-            $_SESSION['success_message'] = "Member removed successfully.";
+            $_SESSION['success_message'] = "Meeting ended successfully.";
         } else {
-            $_SESSION['error_message'] = "Error removing member.";
+            $_SESSION['error_message'] = "Error ending meeting.";
         }
-        header("Location: manage_members.php?event_id=" . $event_id);
+        header("Location: manage-meetings.php?event_id=" . $event_id);
         exit();
     }
 }
@@ -51,28 +83,23 @@ if ($stmt = $conn->prepare($event_query)) {
     $stmt->close();
 }
 
-$members_query = "SELECT 
-    em.user_id,
-    em.event_id,
-    em.role,
-    em.committee_role,
-    em.joined_at,
-    em.status,
-    u.username,
-    u.email
-FROM event_members em
-JOIN users u ON em.user_id = u.id
-WHERE em.event_id = ? 
-AND em.status = 'active'
-ORDER BY em.role DESC, u.username ASC";
+// Get meetings with task count
+$meetings_query = "
+    SELECT m.*, 
+           COUNT(t.task_id) as task_count 
+    FROM meetings m 
+    LEFT JOIN tasks t ON m.meeting_id = t.meeting_id 
+    WHERE m.event_id = ? 
+    GROUP BY m.meeting_id 
+    ORDER BY m.meeting_date DESC, m.meeting_time DESC";
 
-$members = [];
-if ($stmt = $conn->prepare($members_query)) {
+$meetings = [];
+if ($stmt = $conn->prepare($meetings_query)) {
     $stmt->bind_param("i", $event_id);
     $stmt->execute();
     $result = $stmt->get_result();
     while ($row = $result->fetch_assoc()) {
-        $members[] = $row;
+        $meetings[] = $row;
     }
     $stmt->close();
 }
@@ -83,7 +110,7 @@ if ($stmt = $conn->prepare($members_query)) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Manage Members - <?php echo htmlspecialchars($event['event_name']); ?></title>
+    <title>Manage Meetings - <?php echo htmlspecialchars($event['event_name']); ?></title>
     <link href='https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css' rel='stylesheet'>
     <style>
         * {
@@ -98,6 +125,7 @@ if ($stmt = $conn->prepare($members_query)) {
             background: #081b29;
             color: #fff;
         }
+
         .sidebar {
             width: 260px;
             background: rgba(0, 238, 255, 0.1);
@@ -171,26 +199,26 @@ if ($stmt = $conn->prepare($members_query)) {
             padding: 20px;
         }
 
-        .members-table {
+        .meetings-table {
             width: 100%;
             border-collapse: collapse;
             margin-top: 20px;
         }
 
-        .members-table th,
-        .members-table td {
+        .meetings-table th,
+        .meetings-table td {
             padding: 15px;
             text-align: left;
             border-bottom: 1px solid rgba(0, 238, 255, 0.2);
         }
 
-        .members-table th {
+        .meetings-table th {
             background: rgba(0, 238, 255, 0.1);
             color: #0ef;
             font-weight: 500;
         }
 
-        .members-table tr:hover {
+        .meetings-table tr:hover {
             background: rgba(0, 238, 255, 0.05);
         }
 
@@ -201,14 +229,19 @@ if ($stmt = $conn->prepare($members_query)) {
             font-weight: 500;
         }
 
-        .badge-admin {
-            background: rgba(0, 238, 255, 0.2);
-            color: #0ef;
+        .badge-scheduled {
+            background: rgba(0, 255, 0, 0.2);
+            color: #0f0;
         }
 
-        .badge-member {
-            background: rgba(255, 255, 255, 0.1);
-            color: #fff;
+        .badge-ended {
+            background: rgba(255, 0, 0, 0.2);
+            color: #f00;
+        }
+
+        .badge-progress {
+            background: rgba(255, 165, 0, 0.2);
+            color: #ffa500;
         }
 
         .btn {
@@ -218,6 +251,7 @@ if ($stmt = $conn->prepare($members_query)) {
             transition: all 0.3s ease;
             font-size: 14px;
             border: none;
+            margin-right: 5px;
         }
 
         .btn-danger {
@@ -226,37 +260,46 @@ if ($stmt = $conn->prepare($members_query)) {
             color: #ff4444;
         }
 
+        .btn-warning {
+            background: transparent;
+            border: 1px solid #ffa500;
+            color: #ffa500;
+        }
+
         .btn-danger:hover {
             background: #ff4444;
             color: #fff;
+        }
+
+        .btn-warning:hover {
+            background: #ffa500;
+            color: #fff;
+        }
+
+        .success-message, .error-message {
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 20px;
         }
 
         .success-message {
             background: rgba(0, 255, 0, 0.1);
             border: 1px solid #00ff00;
             color: #00ff00;
-            padding: 10px;
-            border-radius: 5px;
-            margin-bottom: 20px;
         }
 
         .error-message {
             background: rgba(255, 0, 0, 0.1);
             border: 1px solid #ff0000;
             color: #ff0000;
-            padding: 10px;
-            border-radius: 5px;
-            margin-bottom: 20px;
         }
 
         .search-box {
             margin-bottom: 20px;
-            display: flex;
-            gap: 10px;
         }
 
         .search-box input {
-            flex: 1;
+            width: 100%;
             padding: 10px;
             border: 1px solid #0ef;
             border-radius: 5px;
@@ -267,15 +310,9 @@ if ($stmt = $conn->prepare($members_query)) {
         .search-box input::placeholder {
             color: rgba(255, 255, 255, 0.5);
         }
-
-        .member-count {
-            color: #0ef;
-            margin-bottom: 15px;
-        }
     </style>
 </head>
 <body>
-   
    <!-- Sidebar -->
    <div class="sidebar">
         <div class="sidebar-header">
@@ -296,15 +333,15 @@ if ($stmt = $conn->prepare($members_query)) {
                 </a>
             </li>
             <li>
-                <a href="add_committee.php?event_id=<?php echo $event_id; ?>"
-                   class="<?php echo $current_page === 'add_committee.php' ? 'active' : ''; ?>">
+                <a href="add-committee.php?event_id=<?php echo $event_id; ?>"
+                   class="<?php echo $current_page === 'add-committee.php' ? 'active' : ''; ?>">
                     <i class='bx bx-user-plus'></i> Committee
                 </a>
             </li>
             <li>
                 <a href="manage-meetings.php?event_id=<?php echo $event_id; ?>"
                    class="<?php echo $current_page === 'manage-meetings.php' ? 'active' : ''; ?>">
-                    <i class='bx bx-user-plus'></i> Meetings
+                    <i class='bx bx-timer'></i> Meetings
                 </a>
             </li>
          
@@ -318,7 +355,7 @@ if ($stmt = $conn->prepare($members_query)) {
 
     <div class="main-content">
         <div class="content-header">
-            <h1>Manage Members</h1>
+            <h1>Manage Meetings</h1>
             <p>Event: <?php echo htmlspecialchars($event['event_name']); ?></p>
         </div>
 
@@ -334,82 +371,86 @@ if ($stmt = $conn->prepare($members_query)) {
 
         <div class="content-section">
             <div class="search-box">
-                <input type="text" id="memberSearch" placeholder="Search members..." onkeyup="searchMembers()">
+                <input type="text" id="meetingSearch" placeholder="Search meetings..." onkeyup="searchMeetings()">
             </div>
 
-            <div class="member-count">
-                Total Members: <?php echo count($members); ?>
-            </div>
-            
-<table class="members-table" id="membersTable">
-    <thead>
-        <tr>
-            <th>Name</th>
-            <th>Email</th>
-            <th>Role</th>
-            <th>Committee Role</th>
-            <th>Joined Date</th>
-            <th>Actions</th>
-        </tr>
-    </thead>
-    <tbody>
-        <?php foreach ($members as $member): ?>
-        <tr>
-            <td><?php echo htmlspecialchars($member['username']); ?></td>
-            <td><?php echo htmlspecialchars($member['email']); ?></td>
-        
-            <td>
-                <span class="badge <?php echo $member['role'] === 'admin' ? 'badge-admin' : 'badge-member'; ?>">
-                    <?php echo ucfirst(htmlspecialchars($member['role'])); ?>
-                </span>
-            </td>
-            <td>
-                <?php echo $member['committee_role'] ? htmlspecialchars(ucfirst($member['committee_role'])) : '-'; ?>
-            </td>
-            <td><?php echo date('M d, Y', strtotime($member['joined_at'])); ?></td>
-            <td>
-                <?php if ($member['role'] !== 'admin'): ?>
-                <form method="POST" style="display: inline;">
-                    <input type="hidden" name="member_id" value="<?php echo $member['user_id']; ?>">
-                    <button type="submit" name="remove_member" class="btn btn-danger"
-                            onclick="return confirm('Are you sure you want to remove this member?')">
-                        <i class='bx bx-user-x'></i> Remove
-                    </button>
-                </form>
-                <?php endif; ?>
-            </td>
-        </tr>
-        <?php endforeach; ?>
-    </tbody>
-</table>
+            <table class="meetings-table" id="meetingsTable">
+                <thead>
+                    <tr>
+                        <th>Meeting Type</th>
+                        <th>Date</th>
+                        <th>Start Time</th>
+                        <th>End Time</th>
+                        <th>Status</th>
+                        <th>Tasks</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($meetings as $meeting): ?>
+                    <tr>
+                        <td><?php echo htmlspecialchars(ucfirst($meeting['meeting_type'])); ?></td>
+                        <td><?php echo date('M d, Y', strtotime($meeting['meeting_date'])); ?></td>
+                        <td><?php echo date('h:i A', strtotime($meeting['meeting_time'])); ?></td>
+                        <td><?php echo date('h:i A', strtotime($meeting['end_time'])); ?></td>
+                        <td>
+                            <span class="badge badge-<?php echo strtolower(str_replace(' ', '', $meeting['status'])); ?>">
+                                <?php echo htmlspecialchars($meeting['status']); ?>
+                            </span>
+                        </td>
+                        <td>
+                            <span class="badge badge-info">
+                                <?php echo $meeting['task_count']; ?> tasks
+                            </span>
+                        </td>
+                        <td>
+                            <?php if ($meeting['status'] !== 'Ended'): ?>
+                            <form method="POST" style="display: inline;">
+                                <input type="hidden" name="meeting_id" value="<?php echo $meeting['meeting_id']; ?>">
+                                <button type="submit" name="end_meeting" class="btn btn-warning"
+                                        onclick="return confirm('Are you sure you want to end this meeting?')">
+                                    <i class='bx bx-time'></i> End Meeting
+                                </button>
+                            </form>
+                            <?php endif; ?>
+                            <form method="POST" style="display: inline;">
+                                <input type="hidden" name="meeting_id" value="<?php echo $meeting['meeting_id']; ?>">
+                                <button type="submit" name="delete_meeting" class="btn btn-danger"
+                                        onclick="return confirm('Warning: This will also delete all tasks associated with this meeting. Are you sure you want to proceed?')">
+                                    <i class='bx bx-trash'></i> Delete
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
         </div>
     </div>
 
     <script>
-        function searchMembers() {
-            const input = document.getElementById('memberSearch');
+        function searchMeetings() {
+            const input = document.getElementById('meetingSearch');
             const filter = input.value.toLowerCase();
-            const table = document.getElementById('membersTable');
+            const table = document.getElementById('meetingsTable');
             const rows = table.getElementsByTagName('tr');
 
             for (let i = 1; i < rows.length; i++) {
-                const nameCol = rows[i].getElementsByTagName('td')[0];
-                const emailCol = rows[i].getElementsByTagName('td')[1];
-                const phoneCol = rows[i].getElementsByTagName('td')[2];
+                const cells = rows[i].getElementsByTagName('td');
+                let found = false;
                 
-                if (nameCol && emailCol && phoneCol) {
-                    const name = nameCol.textContent || nameCol.innerText;
-                    const email = emailCol.textContent || emailCol.innerText;
-                    const phone = phoneCol.textContent || phoneCol.innerText;
-                    
-                    if (name.toLowerCase().indexOf(filter) > -1 || 
-                        email.toLowerCase().indexOf(filter) > -1 || 
-                        phone.toLowerCase().indexOf(filter) > -1) {
-                        rows[i].style.display = '';
-                    } else {
-                        rows[i].style.display = 'none';
+                for (let j = 0; j < cells.length; j++) {
+                    const cell = cells[j];
+                    if (cell) {
+                        const text = cell.textContent || cell.innerText;
+                        if (text.toLowerCase().indexOf(filter) > -1) {
+                            found = true;
+                            break;
+                        }
                     }
                 }
+                
+                rows[i].style.display = found ? '' : 'none';
             }
         }
     </script>

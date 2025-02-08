@@ -337,6 +337,12 @@ $current_page = basename($_SERVER['PHP_SELF']);
                 </a>
             </li>
           
+            <li>
+                <a href="manage-meetings.php?event_id=<?php echo $event_id; ?>"
+                   class="<?php echo $current_page === 'manage-meetings.php' ? 'active' : ''; ?>">
+                    <i class='bx bx-timer'></i> meetings
+                </a>
+            </li>
         </ul>
         <div style="margin-top: auto; padding: 20px 0;">
             <a href="dashboard.php" class="btn danger" style="width: 100%;">
@@ -409,8 +415,11 @@ $current_page = basename($_SERVER['PHP_SELF']);
                     <i class='bx bx-user'></i> Manage Members
                 </button>
                 
-                <button class="btn" onclick="window.location.href='manage_committee.php?event_id=<?php echo $event_id; ?>'">
+                <button class="btn" onclick="window.location.href='add-committee.php?event_id=<?php echo $event_id; ?>'">
                     <i class='bx bx-user-plus'></i> Manage Committee
+                </button>
+                <button class="btn" onclick="window.location.href='manage-meetings.php?event_id=<?php echo $event_id; ?>'">
+                    <i class='bx bx-timer'></i> Manage meetings
                 </button>
                 
                 <button class="btn" onclick="window.location.href='manage_settings.php?event_id=<?php echo $event_id; ?>'">
