@@ -20,37 +20,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['event_code'])) {
             $event = $result->fetch_assoc();
             
             if ($event) {
-                // Check if user is already a member
-                if ($check_stmt = $conn->prepare("SELECT id FROM event_members WHERE event_id = ? AND user_id = ?")) {
-                    $check_stmt->bind_param("ii", $event['id'], $_SESSION['user_id']);
-                    if ($check_stmt->execute()) {
-                        $check_result = $check_stmt->get_result();
-                        
-                        if ($check_result->num_rows === 0) {
-                            // Join the event
-                            if ($join_stmt = $conn->prepare("INSERT INTO event_members (event_id, user_id, role, joined_via_link, status) VALUES (?, ?, 'member', 0, 'active')")) {
-                                $join_stmt->bind_param("ii", $event['id'], $_SESSION['user_id']);
-                                if ($join_stmt->execute()) {
-                                    // Update user's last_active timestamp and set online status
-                                    $update_stmt = $conn->prepare("UPDATE users SET last_active = NOW(), online_status = 'online' WHERE id = ?");
-                                    $update_stmt->bind_param("i", $_SESSION['user_id']);
-                                    $update_stmt->execute();
-                                    $update_stmt->close();
+                // Check if user was previously removed
+                $removed_check = $conn->prepare("SELECT id FROM removed_members WHERE event_id = ? AND user_id = ?");
+                $removed_check->bind_param("ii", $event['id'], $_SESSION['user_id']);
+                $removed_check->execute();
+                $removed_result = $removed_check->get_result();
+                
+                if ($removed_result->num_rows > 0) {
+                    $error = "You were previously removed from this event and cannot rejoin.";
+                } else {
+                    // Check if user is already a member
+                    if ($check_stmt = $conn->prepare("SELECT id FROM event_members WHERE event_id = ? AND user_id = ?")) {
+                        $check_stmt->bind_param("ii", $event['id'], $_SESSION['user_id']);
+                        if ($check_stmt->execute()) {
+                            $check_result = $check_stmt->get_result();
+                            
+                            if ($check_result->num_rows === 0) {
+                                // Join the event
+                                if ($join_stmt = $conn->prepare("INSERT INTO event_members (event_id, user_id, role, joined_via_link, status) VALUES (?, ?, 'member', 0, 'active')")) {
+                                    $join_stmt->bind_param("ii", $event['id'], $_SESSION['user_id']);
+                                    if ($join_stmt->execute()) {
+                                        // Update user's last_active timestamp and set online status
+                                        $update_stmt = $conn->prepare("UPDATE users SET last_active = NOW(), online_status = 'online' WHERE id = ?");
+                                        $update_stmt->bind_param("i", $_SESSION['user_id']);
+                                        $update_stmt->execute();
+                                        $update_stmt->close();
 
-                                    $_SESSION['success_message'] = "Successfully joined: " . htmlspecialchars($event['name']);
-                                    header("Location: dashboard.php?event_id=" . $event['id'] . "&event_code=" . urlencode($event_code));
-                                    exit();
-                                } else {
-                                    $error = "Error joining event. Please try again.";
+                                        $_SESSION['success_message'] = "Successfully joined: " . htmlspecialchars($event['event_name']);
+                                        header("Location: dashboard.php?event_id=" . $event['id'] . "&event_code=" . urlencode($event_code));
+                                        exit();
+                                    } else {
+                                        $error = "Error joining event. Please try again.";
+                                    }
+                                    $join_stmt->close();
                                 }
-                                $join_stmt->close();
+                            } else {
+                                $error = "You're already a member of this event.";
                             }
-                        } else {
-                            $error = "You're already a member of this event.";
                         }
+                        $check_stmt->close();
                     }
-                    $check_stmt->close();
                 }
+                $removed_check->close();
             } else {
                 $error = "Invalid event code. Please try again.";
             }
@@ -70,7 +81,7 @@ $events_query = "
         em.status
     FROM events e 
     JOIN event_members em ON e.id = em.event_id 
-    WHERE em.user_id = ? AND em.status = 'active'
+    WHERE em.user_id = ? AND em.status = 'active' AND e.status = 'active'
     ORDER BY em.joined_at DESC
 ";
 
@@ -81,6 +92,19 @@ if ($stmt = $conn->prepare($events_query)) {
         $joined_events = $result->fetch_all(MYSQLI_ASSOC);
     }
     $stmt->close();
+}
+
+// Fetch removal status for each event
+$removal_statuses = [];
+if (!empty($joined_events)) {
+    $removal_check = $conn->prepare("SELECT event_id FROM removed_members WHERE user_id = ?");
+    $removal_check->bind_param("i", $_SESSION['user_id']);
+    $removal_check->execute();
+    $removal_result = $removal_check->get_result();
+    while ($row = $removal_result->fetch_assoc()) {
+        $removal_statuses[$row['event_id']] = true;
+    }
+    $removal_check->close();
 }
 ?>
 <!DOCTYPE html>
@@ -295,12 +319,6 @@ if ($stmt = $conn->prepare($events_query)) {
             color: #0ef;
         }
 
-        .event-link {
-            text-decoration: none;
-            color: inherit;
-        }
-
-        /* New styles for event card actions */
         .event-card-actions {
             display: flex;
             justify-content: center;
@@ -318,6 +336,7 @@ if ($stmt = $conn->prepare($events_query)) {
             color: #0ef;
             transition: all 0.3s ease;
             text-decoration: none;
+            text-align: center;
         }
 
         .event-action-btn:hover {
@@ -333,6 +352,23 @@ if ($stmt = $conn->prepare($events_query)) {
         .event-action-btn.manage:hover {
             background: #ff9900;
             color: #081b29;
+        }
+
+        .event-action-btn.removed {
+            border-color: #ff4444;
+            color: #ff4444;
+            cursor: not-allowed;
+            opacity: 0.7;
+        }
+
+        .success-message {
+            color: #00ff00;
+            text-align: center;
+            margin-top: 10px;
+            background: rgba(0, 255, 0, 0.1);
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #00ff00;
         }
     </style>
 </head>
@@ -350,6 +386,11 @@ if ($stmt = $conn->prepare($events_query)) {
                 
                 <?php if (isset($error)): ?>
                     <p class="error-message"><?php echo htmlspecialchars($error); ?></p>
+                <?php endif; ?>
+
+                <?php if (isset($_SESSION['success_message'])): ?>
+                    <p class="success-message"><?php echo htmlspecialchars($_SESSION['success_message']); ?></p>
+                    <?php unset($_SESSION['success_message']); ?>
                 <?php endif; ?>
                 
                 <button type="submit" class="btn">Join Event</button>
@@ -378,22 +419,23 @@ if ($stmt = $conn->prepare($events_query)) {
                         <?php endif; ?>
                         
                         <div class="event-card-actions">
-                            <?php if ($event['role'] === 'admin'): ?>
-                                <a href="manage_event.php?event_id=<?php echo $event['id']; ?>" class="event-action-btn manage">
-                                    Manage Event
-                                </a>
-                                <a href="dashboard.php?event_id=<?php echo $event['id']; ?>&event_code=<?php echo urlencode($event['event_code']); ?>" 
-                                   class="event-action-btn">
-                                    Join Event
-                                </a>
+                            <?php if (isset($removal_statuses[$event['id']])): ?>
+                                <span class="event-action-btn removed">
+                                    Removed from Event
+                                </span>
                             <?php else: ?>
+                                <?php if ($event['role'] === 'admin'): ?>
+                                    <a href="manage_event.php?event_id=<?php echo $event['id']; ?>" class="event-action-btn manage">
+                                        Manage Event
+                                    </a>
+                                <?php endif; ?>
                                 <a href="dashboard.php?event_id=<?php echo $event['id']; ?>&event_code=<?php echo urlencode($event['event_code']); ?>" 
                                    class="event-action-btn">
                                     Join Event
                                 </a>
                             <?php endif; ?>
                         </div>
-                    </div>
+                        </div>
                     <?php endforeach; ?>
                 </div>
             </div>
@@ -402,9 +444,29 @@ if ($stmt = $conn->prepare($events_query)) {
     </div>
 
     <script>
+        // Convert event code to uppercase while typing
         document.getElementById('event_code').addEventListener('input', function() {
             this.value = this.value.toUpperCase();
         });
+
+        // Flash success message
+        document.addEventListener('DOMContentLoaded', function() {
+            const successMessage = document.querySelector('.success-message');
+            if (successMessage) {
+                setTimeout(() => {
+                    successMessage.style.opacity = '0';
+                    successMessage.style.transition = 'opacity 0.5s ease';
+                    setTimeout(() => {
+                        successMessage.remove();
+                    }, 500);
+                }, 3000);
+            }
+        });
+
+        // Prevent form resubmission on page refresh
+        if (window.history.replaceState) {
+            window.history.replaceState(null, null, window.location.href);
+        }
     </script>
 </body>
 </html>

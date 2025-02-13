@@ -46,18 +46,55 @@ if ($stmt = $conn->prepare($event_query)) {
     $stmt->close();
 }
 
-// Handle end event action
+
+// Add this code to manage_event.php where the end event action is handled
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['end_event'])) {
-    if ($stmt = $conn->prepare("UPDATE events SET status = 'ended', ended_at = NOW() WHERE id = ?")) {
+    // Start transaction
+    $conn->begin_transaction();
+    
+    try {
+        // Delete all event messages
+        $stmt = $conn->prepare("DELETE FROM messages WHERE event_id = ?");
         $stmt->bind_param("i", $event_id);
-        if ($stmt->execute()) {
-            $_SESSION['success_message'] = "Event has been ended successfully.";
-            header("Location: dashboard.php");
-            exit();
-        } else {
-            $error = "Error ending the event. Please try again.";
-        }
+        $stmt->execute();
         $stmt->close();
+        
+        // Delete all event tasks
+        $stmt = $conn->prepare("DELETE FROM tasks WHERE event_id = ?");
+        $stmt->bind_param("i", $event_id);
+        $stmt->execute();
+        $stmt->close();
+        
+        // Delete all event meetings
+        $stmt = $conn->prepare("DELETE FROM meetings WHERE event_id = ?");
+        $stmt->bind_param("i", $event_id);
+        $stmt->execute();
+        $stmt->close();
+        
+        // Delete all event members
+        $stmt = $conn->prepare("DELETE FROM event_members WHERE event_id = ?");
+        $stmt->bind_param("i", $event_id);
+        $stmt->execute();
+        $stmt->close();
+        
+        // Finally, delete the event itself
+        $stmt = $conn->prepare("DELETE FROM events WHERE id = ?");
+        $stmt->bind_param("i", $event_id);
+        $stmt->execute();
+        $stmt->close();
+        
+        // If all operations successful, commit transaction
+        $conn->commit();
+        
+        $_SESSION['success_message'] = "Event has been ended and all associated data has been deleted successfully.";
+        header("Location: join_event.php");
+        exit();
+        
+    } catch (Exception $e) {
+        // If any operation fails, roll back all changes
+        $conn->rollback();
+        $error = "Error ending the event: " . $e->getMessage();
     }
 }
 

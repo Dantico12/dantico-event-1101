@@ -58,19 +58,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_meeting'])) {
     exit();
 }
 
-// Handle ending meeting
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['end_meeting'])) {
+// Handle ending meeting via AJAX
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'end_meeting') {
     $meeting_id = (int)$_POST['meeting_id'];
-    if ($stmt = $conn->prepare("UPDATE meetings SET status = 'Ended' WHERE meeting_id = ? AND event_id = ?")) {
-        $stmt->bind_param("ii", $meeting_id, $event_id);
-        if ($stmt->execute()) {
-            $_SESSION['success_message'] = "Meeting ended successfully.";
+    $response = array();
+    
+    try {
+        $update_stmt = $conn->prepare("UPDATE meetings SET status = 'Ended', updated_at = NOW() WHERE meeting_id = ? AND event_id = ?");
+        $update_stmt->bind_param("ii", $meeting_id, $event_id);
+        
+        if ($update_stmt->execute()) {
+            $response['success'] = true;
+            $response['message'] = "Meeting ended successfully.";
         } else {
-            $_SESSION['error_message'] = "Error ending meeting.";
+            throw new Exception("Failed to update meeting status");
         }
-        header("Location: manage-meetings.php?event_id=" . $event_id);
-        exit();
+        
+    } catch (Exception $e) {
+        $response['success'] = false;
+        $response['message'] = "Error ending meeting: " . $e->getMessage();
     }
+    
+    header('Content-Type: application/json');
+    echo json_encode($response);
+    exit();
 }
 
 // Get event details
@@ -103,6 +114,7 @@ if ($stmt = $conn->prepare($meetings_query)) {
     }
     $stmt->close();
 }
+
 ?>
 
 <!DOCTYPE html>
@@ -404,23 +416,20 @@ if ($stmt = $conn->prepare($meetings_query)) {
                             </span>
                         </td>
                         <td>
-                            <?php if ($meeting['status'] !== 'Ended'): ?>
-                            <form method="POST" style="display: inline;">
-                                <input type="hidden" name="meeting_id" value="<?php echo $meeting['meeting_id']; ?>">
-                                <button type="submit" name="end_meeting" class="btn btn-warning"
-                                        onclick="return confirm('Are you sure you want to end this meeting?')">
-                                    <i class='bx bx-time'></i> End Meeting
-                                </button>
-                            </form>
-                            <?php endif; ?>
-                            <form method="POST" style="display: inline;">
-                                <input type="hidden" name="meeting_id" value="<?php echo $meeting['meeting_id']; ?>">
-                                <button type="submit" name="delete_meeting" class="btn btn-danger"
-                                        onclick="return confirm('Warning: This will also delete all tasks associated with this meeting. Are you sure you want to proceed?')">
-                                    <i class='bx bx-trash'></i> Delete
-                                </button>
-                            </form>
-                        </td>
+    <?php if ($meeting['status'] !== 'Ended'): ?>
+    <button type="button" class="btn btn-warning" 
+            onclick="endMeeting(<?php echo $meeting['meeting_id']; ?>)">
+        <i class='bx bx-time'></i> End Meeting
+    </button>
+    <?php endif; ?>
+    <form method="POST" style="display: inline;">
+        <input type="hidden" name="meeting_id" value="<?php echo $meeting['meeting_id']; ?>">
+        <button type="submit" name="delete_meeting" class="btn btn-danger"
+                onclick="return confirm('Warning: This will also delete all tasks associated with this meeting. Are you sure you want to proceed?')">
+            <i class='bx bx-trash'></i> Delete
+        </button>
+    </form>
+</td>
                     </tr>
                     <?php endforeach; ?>
                 </tbody>
@@ -453,6 +462,47 @@ if ($stmt = $conn->prepare($meetings_query)) {
                 rows[i].style.display = found ? '' : 'none';
             }
         }
+        function endMeeting(meetingId) {
+    if (!confirm('Are you sure you want to end this meeting?')) {
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('action', 'end_meeting');
+    formData.append('meeting_id', meetingId);
+
+    fetch(window.location.href, {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Find and update the meeting row
+            const row = document.querySelector(`button[onclick="endMeeting(${meetingId})"]`).closest('tr');
+            const statusCell = row.querySelector('td:nth-child(5)');
+            const actionCell = row.querySelector('td:last-child');
+            
+            // Update status
+            statusCell.innerHTML = '<span class="badge badge-ended">Ended</span>';
+            
+            // Remove the end meeting button
+            const endButton = actionCell.querySelector('.btn-warning');
+            if (endButton) {
+                endButton.remove();
+            }
+            
+            // Show success message
+            alert(data.message);
+        } else {
+            alert(data.message);
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('An error occurred while ending the meeting');
+    });
+}
     </script>
 </body>
 </html>

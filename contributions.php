@@ -1,3 +1,51 @@
+<?php
+// Include the database connection
+include 'db.php';
+
+// Get event ID from URL parameter
+$event_id = isset($_GET['event_id']) ? intval($_GET['event_id']) : 0;
+
+if ($event_id === 0) {
+    echo "<div class='error-message'>No event selected. Please select an event.</div>";
+    exit;
+}
+
+// First, get event details
+// First, get event details
+$event_sql = "SELECT event_name FROM events WHERE id = ?";
+$stmt = $conn->prepare($event_sql);
+$stmt->bind_param("i", $event_id);
+$stmt->execute();
+$event_result = $stmt->get_result();
+$event_name = "";
+if ($event_result->num_rows > 0) {
+    $event_row = $event_result->fetch_assoc();
+    $event_name = $event_row['event_name'];
+}
+
+$sql = "SELECT c.phone_number, c.amount, c.contribution_date, u.username 
+        FROM contributions c
+        LEFT JOIN users u ON c.user_id = u.id
+        WHERE c.event_id = ? 
+        ORDER BY c.contribution_date DESC";
+$stmt = $conn->prepare($sql);
+$stmt->bind_param("i", $event_id);
+$stmt->execute();
+$result = $stmt->get_result();
+
+// Update the summary query to maintain existing functionality
+$total_sql = "SELECT 
+    COUNT(*) as total_contributions,
+    SUM(amount) as total_amount,
+    COUNT(DISTINCT phone_number) as unique_contributors
+    FROM contributions 
+    WHERE event_id = ?";
+$stmt = $conn->prepare($total_sql);
+$stmt->bind_param("i", $event_id);
+$stmt->execute();
+$summary = $stmt->get_result()->fetch_assoc();
+?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -245,6 +293,89 @@
         .toggle-btn:hover {
             color: #fff;
         }
+        .contribution-table {
+            width: 100%;
+            border-collapse: collapse;
+            color: #fff;
+            margin-top: 20px;
+        }
+
+        .contribution-table th,
+        .contribution-table td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid rgba(0, 238, 255, 0.2);
+        }
+
+        .contribution-table th {
+            background-color: rgba(0, 238, 255, 0.1);
+            color: #0ef;
+            font-weight: 600;
+        }
+
+        .contribution-table tbody tr:hover {
+            background-color: rgba(0, 238, 255, 0.05);
+        }
+
+        .table-container {
+            overflow-x: auto;
+            background: rgba(8, 27, 41, 0.9);
+            border-radius: 8px;
+            padding: 20px;
+        }
+
+        .section-title {
+            color: #0ef;
+            margin-bottom: 20px;
+            font-size: 1.2rem;
+        }
+
+        .no-data {
+            color: #fff;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .event-selector {
+            margin-bottom: 20px;
+        }
+
+        .event-selector select {
+            padding: 8px;
+            background: rgba(0, 238, 255, 0.1);
+            border: 1px solid #0ef;
+            color: #fff;
+            border-radius: 4px;
+        }
+
+        .error-message {
+            color: #ff4444;
+            padding: 15px;
+            background: rgba(255, 68, 68, 0.1);
+            border: 1px solid #ff4444;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+
+        .summary-box {
+            background: rgba(0, 238, 255, 0.1);
+            border: 1px solid #0ef;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            color: #fff;
+        }
+
+        .summary-box h4 {
+            color: #0ef;
+            margin-bottom: 10px;
+        }
+
+        .summary-item {
+            display: flex;
+            justify-content: space-between;
+            margin: 5px 0;
+        }
     </style>
 </head>
 <body>
@@ -258,7 +389,7 @@
             <!-- Dashboard -->
             <div class="menu-category">
                 <div class="menu-item active">
-                    <a href="./dashboard.html">
+                    <a href="./dashboard.php">
                         <i class='bx bx-home-alt'></i>
                         <span>Dashboard</span>
                     </a>
@@ -269,13 +400,13 @@
             <div class="menu-category">
                 <div class="category-title">Committees</div>
                 <div class="menu-item">
-                    <a href="./add-committee.html">
+                    <a href="./add-committee.php">
                         <i class='bx bx-plus-circle'></i>
                         <span>Add Committee</span>
                     </a>
                 </div>
                 <div class="menu-item">
-                    <a href="./committee-list.html">
+                    <a href="./committee-list.php">
                         <i class='bx bx-group'></i>
                         <span>Committee List</span>
                     </a>
@@ -286,14 +417,14 @@
             <div class="menu-category">
                 <div class="category-title">Communication</div>
                 <div class="menu-item">
-                    <a href="./chat.html">
+                    <a href="./chat.php">
                         <i class='bx bx-message-rounded-dots'></i>
                         <span>Chat System</span>
                         <div class="notification-badge">3</div>
                     </a>
                 </div>
                 <div class="menu-item">
-                    <a href="./video-conference.html">
+                    <a href="./video-conference.php">
                         <i class='bx bx-video'></i>
                         <span>Video Conference</span>
                     </a>
@@ -303,14 +434,14 @@
             <div class="menu-category">
                 <div class="category-title">Contributions</div>
                 <div class="menu-item">
-                    <a href="./make_contribution.html">
+                    <a href="./make_contribution.php">
                         <i class='bx bx-plus-circle'></i>
                         <span>make contributions</span>
                        
                     </a>
                 </div>
                 <div class="menu-item">
-                    <a href="./contributions.html">
+                    <a href="./contributions.php">
                         <i class='bx bx-money'></i>
                         <span>contribiutions</span>
                     </a>
@@ -321,13 +452,13 @@
             <div class="menu-category">
                 <div class="category-title">Reviews</div>
                 <div class="menu-item">
-                    <a href="./minutes.html">
+                    <a href="./minutes.php">
                         <i class='bx bxs-timer'></i>
                         <span>Minutes</span>
                     </a>
                 </div>
                 <div class="menu-item">
-                    <a href="./tasks.html">
+                    <a href="./tasks.php">
                         <i class='bx bx-task' ></i>
                         <span>Tasks</span>
                     </a>
@@ -341,7 +472,7 @@
             <div class="menu-category">
                 <div class="category-title">Tools</div>
                 <div class="menu-item">
-                    <a href="./schedule.html">
+                    <a href="./schedule.php">
                         <i class='bx bx-calendar'></i>
                         <span>Schedule</span>
                     </a>
@@ -366,8 +497,81 @@
         </div>
 
         <div class="content-section">
-            <!-- Content will be loaded here based on menu selection -->
+        <!-- Event Selector -->
+        <div class="event-selector">
+            <select onchange="window.location.href='?event_id=' + this.value">
+                <?php
+                $events_sql = "SELECT id, event_name FROM events ORDER BY event_name";
+                $events_result = $conn->query($events_sql);
+                while ($event = $events_result->fetch_assoc()) {
+                    $selected = ($event['id'] == $event_id) ? 'selected' : '';
+                    echo "<option value='{$event['id']}' {$selected}>{$event['event_name']}</option>";
+                }
+                ?>
+            </select>
         </div>
+
+        <!-- Summary Box -->
+        <?php if ($event_name): ?>
+        <div class="summary-box">
+            <h4>Contribution Summary for <?php echo htmlspecialchars($event_name); ?></h4>
+            <?php
+            $total_sql = "SELECT 
+                COUNT(*) as total_contributions,
+                SUM(amount) as total_amount,
+                COUNT(DISTINCT phone_number) as unique_contributors
+                FROM contributions 
+                WHERE event_id = ?";
+            $stmt = $conn->prepare($total_sql);
+            $stmt->bind_param("i", $event_id);
+            $stmt->execute();
+            $summary = $stmt->get_result()->fetch_assoc();
+            ?>
+            <div class="summary-item">
+                <span>Total Contributions:</span>
+                <span><?php echo $summary['total_contributions']; ?></span>
+            </div>
+            <div class="summary-item">
+                <span>Total Amount:</span>
+                <span>KES <?php echo number_format($summary['total_amount'], 2); ?></span>
+            </div>
+            <div class="summary-item">
+                <span>Unique Contributors:</span>
+                <span><?php echo $summary['unique_contributors']; ?></span>
+            </div>
+        </div>
+        <?php endif; ?>
+
+        <!-- Contributions Table -->
+        <h3 class="section-title">Contributions List</h3>
+        <div class="table-container">
+    <table class="contribution-table">
+        <thead>
+            <tr>
+                <th>Username</th>
+                <th>Phone Number</th>
+                <th>Amount (KES)</th>
+                <th>Contribution Date</th>
+            </tr>
+        </thead>
+        <tbody>
+            <?php
+            if ($result && $result->num_rows > 0) {
+                while($row = $result->fetch_assoc()) {
+                    echo "<tr>";
+                    echo "<td>" . htmlspecialchars($row["username"] ?? 'Unknown User') . "</td>";
+                    echo "<td>" . htmlspecialchars($row["phone_number"]) . "</td>";
+                    echo "<td>" . number_format($row["amount"], 2) . "</td>";
+                    echo "<td>" . htmlspecialchars($row["contribution_date"]) . "</td>";
+                    echo "</tr>";
+                }
+            } else {
+                echo "<tr><td colspan='4' class='no-data'>No contributions found for this event</td></tr>";
+            }
+            ?>
+        </tbody>
+    </table>
+</div>
     </div>
 
     <script>
@@ -395,5 +599,10 @@
             });
         });
     </script>
+      <?php
+    // Close the database connection
+    $stmt->close();
+    $conn->close();
+    ?>
 </body>
 </html>

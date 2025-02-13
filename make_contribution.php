@@ -1,19 +1,4 @@
 <?php
-
-session_start();
-
-// Function to generate base URL with event context
-function getEventContextURL() {
-    $base_url = '';
-    if (isset($_SESSION['current_event_id']) && isset($_SESSION['current_event_code'])) {
-        $base_url = '?event_id=' . urlencode($_SESSION['current_event_id']) . 
-                    '&event_code=' . urlencode($_SESSION['current_event_code']);
-    }
-    return $base_url;
-}
-
-// Get the event context URL to be used across navigation
-$base_url = getEventContextURL();
 class MpesaGateway {
     private $consumer_key;
     private $consumer_secret;
@@ -23,10 +8,7 @@ class MpesaGateway {
     private $environment;
     private $conn;
 
-    
-
     public function __construct($db_connection) {
-        // Use credentials from the second implementation
         $this->consumer_key = '4CXELNo5HnT5uW2rNR7Rls6JUQX6DscFYIrsunDpAQIgi99p';
         $this->consumer_secret = '5mLUeJ480thfZGJ6fkKENY8jtMXvdulXvzYYObYUtrrPsoEanGEZ3zJTbZqT8RIe';
         $this->initiator_name = "testapi";
@@ -51,20 +33,21 @@ class MpesaGateway {
         $result = json_decode($response, true);
         return $result['access_token'] ?? null;
     }
-    public function initiateSTKPush($phone_number, $amount, $event_id) {
+
+    public function initiateSTKPush($phone_number, $amount, $event_id, $user_id) {
         // Sanitize phone number
         $phone_number = $this->sanitizePhoneNumber($phone_number);
-    
+
         $access_token = $this->generateAccessToken();
         if (!$access_token) {
             return ['error' => 'Failed to generate access token'];
         }
-    
+
         $timestamp = date('YmdHis');
         $business_short_code = '174379';
         $password = base64_encode($business_short_code . $this->passkey . $timestamp);
         $order_ref = 'ORDER' . $timestamp . rand(1000, 9999);
-    
+
         $curl_post_data = [
             'BusinessShortCode' => $business_short_code,
             'Password' => $password,
@@ -78,9 +61,9 @@ class MpesaGateway {
             'AccountReference' => $order_ref,
             'TransactionDesc' => "Contribution for Event ID $event_id"
         ];
-    
+
         $url = 'https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest';
-    
+
         $curl = curl_init();
         curl_setopt_array($curl, [
             CURLOPT_URL => $url,
@@ -92,21 +75,16 @@ class MpesaGateway {
             CURLOPT_POST => true,
             CURLOPT_POSTFIELDS => json_encode($curl_post_data)
         ]);
-    
+
         $response = curl_exec($curl);
         curl_close($curl);
-    
+
         $result = json_decode($response, true);
         
-        // Only log the request for now - don't insert into database yet
-        $this->logPaymentRequest($order_ref, $phone_number, $amount, $event_id, $result);
-        
-        // Add the order_ref to the result so we can use it later
-        $result['order_ref'] = $order_ref;
-        $result['phone_number'] = $phone_number;
-        $result['amount'] = $amount;
-        $result['event_id'] = $event_id;
-        
+        // Log the payment request and insert transaction with user_id
+        $this->logPaymentRequest($order_ref, $phone_number, $amount, $event_id, $user_id, $result);
+        $this->insertTransaction($order_ref, $phone_number, $amount, $event_id, $user_id, json_encode($result));
+
         return $result;
     }
 
@@ -122,24 +100,24 @@ class MpesaGateway {
         throw new Exception('Invalid phone number format');
     }
 
-    private function logPaymentRequest($orderRef, $phone, $amount, $event_id, $response) {
+    private function logPaymentRequest($orderRef, $phone, $amount, $event_id, $user_id, $response) {
         $logData = [
             'timestamp' => date('Y-m-d H:i:s'),
             'order_ref' => $orderRef,
             'phone' => $phone,
             'amount' => $amount,
             'event_id' => $event_id,
+            'user_id' => $user_id,
             'response' => $response
         ];
         error_log("M-Pesa Payment Request: " . json_encode($logData));
     }
-
-    private function insertTransaction($orderRef, $phone, $amount, $event_id, $mpesaResponse) {
+    private function insertTransaction($orderRef, $phone, $amount, $event_id, $user_id, $mpesaResponse) {
         $status = 'pending';
-        $stmt = $this->conn->prepare("INSERT INTO contributions (order_ref, event_id, phone_number, amount, mpesa_response, transaction_status, contribution_date) VALUES (?, ?, ?, ?, ?, ?, NOW())");
+        $stmt = $this->conn->prepare("INSERT INTO contributions (order_ref, event_id, phone_number, amount, mpesa_response, status, contribution_date, user_id) VALUES (?, ?, ?, ?, ?, ?, NOW(), ?)");
         
         if ($stmt) {
-            $stmt->bind_param("sisdsb", $orderRef, $event_id, $phone, $amount, $mpesaResponse, $status);
+            $stmt->bind_param("sissssi", $orderRef, $event_id, $phone, $amount, $mpesaResponse, $status, $user_id);
             $stmt->execute();
             $stmt->close();
         } else {
@@ -147,9 +125,9 @@ class MpesaGateway {
         }
     }
 
-    public function recordContribution($event_id, $phone_number, $amount, $transaction_status) {
-        $stmt = $this->conn->prepare("INSERT INTO contributions (event_id, phone_number, amount, transaction_status, contribution_date) VALUES (?, ?, ?, ?, NOW())");
-        $stmt->bind_param("isds", $event_id, $phone_number, $amount, $transaction_status);
+    public function recordContribution($event_id, $phone_number, $amount, $transaction_status, $user_id) {
+        $stmt = $this->conn->prepare("INSERT INTO contributions (event_id, phone_number, amount, transaction_status, contribution_date, user_id) VALUES (?, ?, ?, ?, NOW(), ?)");
+        $stmt->bind_param("isdsi", $event_id, $phone_number, $amount, $transaction_status, $user_id);
         return $stmt->execute();
     }
 }
@@ -347,23 +325,8 @@ class MpesaGateway {
             margin: 0 auto;
         }
 
-        .success-message {
-            background: rgba(0, 238, 255, 0.1);
-            border: 1px solid #0ef;
-            color: #fff;
-            padding: 15px;
-            border-radius: 5px;
-            margin-bottom: 20px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            display: none;
-        }
-
-        .success-message.show {
-            display: flex;
-        }
-
+      
+        
         .form-title {
             color: #fff;
             margin-bottom: 25px;
@@ -463,6 +426,37 @@ class MpesaGateway {
         .reset-btn:hover {
             background: rgba(0, 238, 255, 0.1);
         }
+        .success-message {
+    background: rgba(0, 238, 255, 0.1);
+    border: 1px solid #0ef;
+    color: #fff;
+    padding: 15px;
+    border-radius: 5px;
+    margin-bottom: 20px;
+    display: none;
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 1000;
+    animation: slideIn 0.3s ease-out;
+}
+
+.success-message.show {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
 
         /* Responsive Styles */
         @media (max-width: 768px) {
@@ -498,6 +492,23 @@ class MpesaGateway {
     </style>
 </head>
 <body>
+<?php
+// Ensure this PHP block is at the top of your sidebar include or in a separate navigation.php file
+session_start();
+
+// Function to generate base URL with event context
+function getEventContextURL() {
+    $base_url = '';
+    if (isset($_SESSION['current_event_id']) && isset($_SESSION['current_event_code'])) {
+        $base_url = '?event_id=' . urlencode($_SESSION['current_event_id']) . 
+                    '&event_code=' . urlencode($_SESSION['current_event_code']);
+    }
+    return $base_url;
+}
+
+// Get the event context URL to be used across navigation
+$base_url = getEventContextURL();
+?>
 
 <!-- Sidebar Navigation -->
 <nav class="sidebar">
@@ -518,7 +529,13 @@ class MpesaGateway {
 
         <!-- Committees Section -->
         <div class="menu-category">
-           
+            <div class="category-title">Paybill</div>
+            <div class="menu-item">
+                <a href="./paybill.php<?= $base_url ?>">
+                    <i class='bx bx-plus-circle'></i>
+                    <span>Add Paybill</span>
+                </a>
+            </div>
             <div class="menu-item">
                 <a href="./committee-list.php<?= $base_url ?>">
                     <i class='bx bx-group'></i>
@@ -577,7 +594,12 @@ class MpesaGateway {
                     <span>Tasks</span>
                 </a>
             </div>
-            
+            <div class="menu-item">
+                <a href="./reports.php<?= $base_url ?>">
+                    <i class='bx bx-line-chart'></i>
+                    <span>Reports</span>
+                </a>
+            </div>
         </div>
 
         <!-- Other Tools -->
@@ -589,146 +611,152 @@ class MpesaGateway {
                     <span>Schedule</span>
                 </a>
             </div>
-          
+            <div class="menu-item">
+                <a href="./settings.php<?= $base_url ?>">
+                    <i class='bx bx-cog'></i>
+                    <span>Settings</span>
+                </a>
+            </div>
         </div>
     </div>
 </nav>
-    <!-- Main Content -->
-    <div class="main-content">
-    <div class="header">
-        <button class="toggle-btn">
-            <i class='bx bx-menu'></i>
-        </button>
-        <h2 class="header-title">M-Pesa Contribution</h2>
-        <div class="header-actions">
-            <i class='bx bx-search'></i>
-            <i class='bx bx-bell'></i>
-            <i class='bx bx-user-circle'></i>
+      <!-- Main Content -->
+      <div class="main-content">
+        <div class="header">
+            <button class="toggle-btn">
+                <i class='bx bx-menu'></i>
+            </button>
+            <h2 class="header-title">M-Pesa Contribution</h2>
+            <div class="header-actions">
+                <i class='bx bx-search'></i>
+                <i class='bx bx-bell'></i>
+                <i class='bx bx-user-circle'></i>
+            </div>
+        </div>
+
+        <div class="form-container">
+            <div class="success-message">
+                <i class='bx bx-check-circle' style="color: #0ef; font-size: 20px;"></i>
+                <span>STK push sent successfully! Check your phone to complete the payment.</span>
+            </div>
+            
+            <h3 class="form-title">
+                <i class='bx bx-money'></i>
+                M-Pesa Contribution
+            </h3>
+            
+            <form id="contributionForm">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>
+                            <i class='bx bx-phone'></i>
+                            Phone Number
+                        </label>
+                        <input 
+                            type="tel" 
+                            id="phoneNumber" 
+                            placeholder="Enter M-Pesa registered phone number" 
+                            required 
+                            pattern="(07|01)[0-9]{8}" 
+                            title="Please enter a valid Kenyan phone number (07/01)"
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <i class='bx bx-dollar'></i>
+                            Contribution Amount
+                        </label>
+                        <input 
+                            type="number" 
+                            id="amount" 
+                            placeholder="Enter amount in KES" 
+                            required 
+                            min="1"
+                        >
+                    </div>
+                </div>
+
+                <div class="button-group">
+                    <button type="reset" class="reset-btn">
+                        <i class='bx bx-reset'></i>
+                        Reset
+                    </button>
+                    <button type="submit" class="submit-btn">
+                        <i class='bx bx-check'></i>
+                        Send M-Pesa Request
+                    </button>
+                </div>
+            </form>
         </div>
     </div>
 
-    <div class="form-container">
-        <div class="success-message">
-            <i class='bx bx-check-circle' style="color: #0ef; font-size: 20px;"></i>
-            Payment request sent successfully!
-        </div>
-        
-        <h3 class="form-title">
-            <i class='bx bx-money'></i>
-            M-Pesa Contribution
-        </h3>
-        
-        <form id="contributionForm">
-            <div class="form-grid">
-                <div class="form-group">
-                    <label>
-                        <i class='bx bx-phone'></i>
-                        Phone Number
-                    </label>
-                    <input 
-                        type="tel" 
-                        id="phoneNumber" 
-                        placeholder="Enter M-Pesa registered phone number" 
-                        required 
-                        pattern="(07|01)[0-9]{8}" 
-                        title="Please enter a valid Kenyan phone number (07/01)"
-                    >
-                </div>
-
-                <div class="form-group">
-                    <label>
-                        <i class='bx bx-dollar'></i>
-                        Contribution Amount
-                    </label>
-                    <input 
-                        type="number" 
-                        id="amount" 
-                        placeholder="Enter amount in KES" 
-                        required 
-                        min="1"
-                    >
-                </div>
-            </div>
-
-            <div class="button-group">
-                <button type="reset" class="reset-btn">
-                    <i class='bx bx-reset'></i>
-                    Reset
-                </button>
-                <button type="submit" class="submit-btn">
-                    <i class='bx bx-check'></i>
-                    Send M-Pesa Request
-                </button>
-            </div>
-        </form>
-    </div>
-</div>
-<script>
-    document.addEventListener('DOMContentLoaded', function() {
-    const form = document.getElementById('contributionForm');
-    const successMessage = document.querySelector('.success-message');
-
-    form.addEventListener('submit', async function(e) {
-        e.preventDefault();
-        
-        const phoneNumber = document.getElementById('phoneNumber').value;
-        const amount = document.getElementById('amount').value;
-        const submitButton = this.querySelector('button[type="submit"]');
-        
-        // Disable form while processing
-        submitButton.disabled = true;
-        submitButton.innerHTML = '<i class="bx bx-loader-alt bx-spin"></i> Processing...';
-
-        try {
+    <script>
+        document.getElementById('contributionForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const form = this;
+            const phoneNumber = document.getElementById('phoneNumber').value;
+            const amount = document.getElementById('amount').value;
+            const successMessage = document.querySelector('.success-message');
+            
+            // Disable form submission while processing
+            const submitButton = form.querySelector('button[type="submit"]');
+            submitButton.disabled = true;
+            submitButton.innerHTML = '<i class="bx bx-loader-alt bx-spin"></i> Processing...';
+            
             const formData = new FormData();
             formData.append('phone_number', phoneNumber);
             formData.append('amount', amount);
 
-            const response = await fetch('process_payment.php', {
+            fetch('process_payment.php', {
                 method: 'POST',
                 body: formData,
                 headers: {
                     'X-Requested-With': 'XMLHttpRequest'
                 }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    // Show success message
+                    successMessage.classList.add('show');
+                    
+                    // Clear form fields
+                    form.reset();
+                    
+                    // Hide success message after 3 seconds
+                    setTimeout(() => {
+                        successMessage.classList.remove('show');
+                    }, 3000);
+                } else {
+                    // Handle error response
+                    throw new Error(data.message || 'Payment initiation failed');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert(error.message || 'An error occurred during payment processing');
+            })
+            .finally(() => {
+                // Reset submit button
+                submitButton.disabled = false;
+                submitButton.innerHTML = '<i class="bx bx-check"></i> Send M-Pesa Request';
             });
+        });
 
-            const text = await response.text();
-            console.log('Raw response:', text);
-            
-            let data;
-            try {
-                data = JSON.parse(text);
-            } catch (e) {
-                console.error('JSON Parse Error:', e);
-                throw new Error('Server returned invalid JSON');
+        // Add reset confirmation
+        document.querySelector('.reset-btn').addEventListener('click', function(e) {
+            if (!confirm('Are you sure you want to clear the form?')) {
+                e.preventDefault();
             }
+        });
 
-            console.log('Parsed response:', data);
-            
-            if (data.status === 'success' && data.data?.CheckoutRequestID) {
-                successMessage.innerHTML = `
-                    <i class='bx bx-check-circle' style="color: #0ef; font-size: 20px;"></i>
-                    Please check your phone for the M-Pesa prompt
-                `;
-                successMessage.classList.add('show');
-                form.reset();
-                
-                // Hide success message after 10 seconds
-                setTimeout(() => {
-                    successMessage.classList.remove('show');
-                }, 10000);
-            } else {
-                throw new Error(data.message || 'Payment processing failed');
-            }
-        } catch (error) {
-            console.error('Error details:', error);
-            alert('Payment processing failed: ' + error.message);
-        } finally {
-            submitButton.disabled = false;
-            submitButton.innerHTML = '<i class="bx bx-check"></i> Send M-Pesa Request';
-        }
-    });
-});
-</script>
+        // Toggle sidebar functionality
+        document.querySelector('.toggle-btn').addEventListener('click', function() {
+            document.querySelector('.sidebar').classList.toggle('collapse');
+            document.querySelector('.main-content').classList.toggle('expand');
+        });
+    </script>
 </body>
 </html>

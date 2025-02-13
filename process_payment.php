@@ -8,80 +8,87 @@ ini_set('display_errors', 0);
 ini_set('log_errors', 1);
 ini_set('error_log', 'mpesa_error.log');
 
-// Start session if not already started
+// Ensure proper response headers
+header('Content-Type: application/json');
+header('Cache-Control: no-cache, must-revalidate');
+
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
 try {
-    // Capture any output that might occur during includes
-    ob_start();
+    // Verify that this is an AJAX request
+    if (!isset($_SERVER['HTTP_X_REQUESTED_WITH']) || strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) != 'xmlhttprequest') {
+        throw new Exception('Invalid request method');
+    }
+
+    // Include required files
+    if (!file_exists('db.php') || !file_exists('make_contribution.php')) {
+        throw new Exception('Required files not found');
+    }
+    
     require_once 'db.php';
     require_once 'make_contribution.php';
-    $include_output = ob_get_clean();
-    
-    if (!empty($include_output)) {
-        error_log("Unexpected output during includes: " . $include_output);
-    }
-
-    // Clear all previous output
-    while (ob_get_level()) {
-        ob_end_clean();
-    }
-
-    // Set JSON header
-    header('Content-Type: application/json');
 
     // Validate session and inputs
-    if (!isset($_SESSION['current_event_id'])) {
-        throw new Exception('Invalid event context');
+    if (!isset($_SESSION['current_event_id']) || !isset($_SESSION['user_id'])) {
+        throw new Exception('Session expired or invalid. Please refresh the page and try again.');
     }
 
     if (!isset($_POST['phone_number']) || !isset($_POST['amount'])) {
-        throw new Exception('Missing required fields');
+        throw new Exception('Missing required fields. Please fill in all required information.');
     }
 
-    $phone_number = $_POST['phone_number'];
-    $amount = floatval($_POST['amount']);
-    $event_id = $_SESSION['current_event_id'];
-    
-    if ($amount <= 0) {
-        throw new Exception('Invalid amount');
+    // Sanitize and validate inputs
+    $phone_number = filter_var($_POST['phone_number'], FILTER_SANITIZE_STRING);
+    $amount = filter_var($_POST['amount'], FILTER_VALIDATE_FLOAT);
+    $event_id = filter_var($_SESSION['current_event_id'], FILTER_VALIDATE_INT);
+    $user_id = filter_var($_SESSION['user_id'], FILTER_VALIDATE_INT);
+
+    if (!$phone_number || !preg_match('/^(07|01)[0-9]{8}$/', $phone_number)) {
+        throw new Exception('Invalid phone number format');
+    }
+
+    if (!$amount || $amount <= 0) {
+        throw new Exception('Invalid amount. Please enter a valid amount.');
+    }
+
+    if (!$event_id || !$user_id) {
+        throw new Exception('Invalid session data. Please refresh and try again.');
     }
 
     // Initialize M-Pesa gateway
     $mpesa = new MpesaGateway($conn);
-    
-    // Process payment with event-specific paybill
-    $result = $mpesa->initiateSTKPush($phone_number, $amount, $event_id);
-    
-    // Log the result
-    error_log("M-Pesa API Response: " . print_r($result, true));
 
-    // Check for specific M-Pesa errors
+    // Process payment
+    $result = $mpesa->initiateSTKPush($phone_number, $amount, $event_id, $user_id);
+
     if (isset($result['error'])) {
         throw new Exception($result['error']);
     }
 
+    // Clean output buffer before sending response
+    ob_clean();
+
     echo json_encode([
         'status' => 'success',
-        'data' => $result
+        'data' => $result,
+        'message' => 'STK push sent successfully'
     ]);
-    exit;
 
 } catch (Exception $e) {
+    // Log error
     error_log("Payment Processing Error: " . $e->getMessage());
     
-    // Clear any output
-    while (ob_get_level()) {
-        ob_end_clean();
-    }
-    
-    header('Content-Type: application/json');
+    // Clean output buffer before sending error response
+    ob_clean();
+
     echo json_encode([
         'status' => 'error',
         'message' => $e->getMessage()
     ]);
-    exit;
 }
+
+// End output buffering and send response
+ob_end_flush();
 ?>

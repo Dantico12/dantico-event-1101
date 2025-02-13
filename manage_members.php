@@ -2,6 +2,35 @@
 session_start();
 require 'db.php';
 
+function removeMemberAndTasks($conn, $event_id, $member_id) {
+    $conn->begin_transaction();
+    try {
+        // Delete tasks assigned to the member
+        $task_stmt = $conn->prepare("DELETE FROM tasks WHERE event_id = ? AND assigned_to = ?");
+        $task_stmt->bind_param("ii", $event_id, $member_id);
+        $task_stmt->execute();
+        $task_stmt->close();
+
+        // Delete the event member record
+        $member_stmt = $conn->prepare("DELETE FROM event_members WHERE event_id = ? AND user_id = ?");
+        $member_stmt->bind_param("ii", $event_id, $member_id);
+        $member_stmt->execute();
+        $member_stmt->close();
+
+        // Record this removal in a new table to track removed members
+        $removed_stmt = $conn->prepare("INSERT INTO removed_members (event_id, user_id, removed_at) VALUES (?, ?, NOW())");
+        $removed_stmt->bind_param("ii", $event_id, $member_id);
+        $removed_stmt->execute();
+        $removed_stmt->close();
+
+        $conn->commit();
+        return true;
+    } catch (Exception $e) {
+        $conn->rollback();
+        return false;
+    }
+}
+
 // Redirect if not logged in
 if (!isset($_SESSION['user_id'])) {
     header("Location: login.php");
@@ -27,19 +56,21 @@ if (!$is_admin) {
 }
 
 // Handle member removal
+
+// Replace your existing member removal code with this:
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['remove_member'])) {
     $member_id = (int)$_POST['member_id'];
-    if ($stmt = $conn->prepare("UPDATE event_members SET status = 'removed' WHERE event_id = ? AND user_id = ?")) {
-        $stmt->bind_param("ii", $event_id, $member_id);
-        if ($stmt->execute()) {
-            $_SESSION['success_message'] = "Member removed successfully.";
-        } else {
-            $_SESSION['error_message'] = "Error removing member.";
-        }
-        header("Location: manage_members.php?event_id=" . $event_id);
-        exit();
+    
+    if (removeMemberAndTasks($conn, $event_id, $member_id)) {
+        $_SESSION['success_message'] = "Member and associated tasks removed successfully.";
+    } else {
+        $_SESSION['error_message'] = "Error removing member. Please try again.";
     }
+    
+    header("Location: manage_members.php?event_id=" . $event_id);
+    exit();
 }
+
 
 // Get event details
 $event_query = "SELECT event_name FROM events WHERE id = ?";

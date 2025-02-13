@@ -346,8 +346,8 @@ $event_members = $members_result->fetch_all(MYSQLI_ASSOC);
 </head>
 <body>
         
-<!-- Sidebar Navigation -->
-<nav class="sidebar">
+ <!-- Sidebar Navigation -->
+ <nav class="sidebar">
     <div class="sidebar-header">
         <i class='bx bx-calendar-event' style="color: #0ef; font-size: 24px;"></i>
         <h2>Dantico Events</h2>
@@ -365,7 +365,13 @@ $event_members = $members_result->fetch_all(MYSQLI_ASSOC);
 
         <!-- Committees Section -->
         <div class="menu-category">
-            
+            <div class="category-title">paybill</div>
+            <div class="menu-item">
+                <a href="./paybill.php<?= $base_url ?>">
+                    <i class='bx bx-plus-circle'></i>
+                    <span>Add Paybill</span>
+                </a>
+            </div>
             <div class="menu-item">
                 <a href="./committee-list.php<?= $base_url ?>">
                     <i class='bx bx-group'></i>
@@ -411,7 +417,13 @@ $event_members = $members_result->fetch_all(MYSQLI_ASSOC);
 
         <!-- Reviews Section -->
         <div class="menu-category">
-            
+            <div class="category-title">Reviews</div>
+            <div class="menu-item">
+                <a href="./minutes.php<?= $base_url ?>">
+                    <i class='bx bxs-timer'></i>
+                    <span>Minutes</span>
+                </a>
+            </div>
             <div class="menu-item">
                 <a href="./tasks.php<?= $base_url ?>">
                     <i class='bx bx-task'></i>
@@ -434,7 +446,6 @@ $event_members = $members_result->fetch_all(MYSQLI_ASSOC);
         </div>
     </div>
 </nav>
-
    
     <div class="main-content">
         <div class="container">

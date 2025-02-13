@@ -3,6 +3,7 @@ session_start();
 
 // Include database connection
 require 'db.php';
+
 // Function to generate base URL with event context
 function getEventContextURL() {
     $base_url = '';
@@ -28,33 +29,34 @@ function getUserRoles($conn, $user_id, $event_id) {
     $stmt->execute();
     return $stmt->get_result()->fetch_assoc();
 }
+
 // Function to check user's role access
 function hasAccess($required_roles, $user_role, $committee_role) {
-    // Admin or Organizer has access to everything
     if ($user_role === 'admin' || $user_role === 'organizer') {
         return true;
     }
-
-    // Convert required roles to lowercase for case-insensitive comparison
     $required_roles = array_map('strtolower', $required_roles);
-
-    // For members with specific committee roles
     if ($user_role === 'member' && !empty($committee_role)) {
-        $committee_role = strtolower($committee_role);  // Convert to lowercase
+        $committee_role = strtolower($committee_role);
         return in_array($committee_role, $required_roles);
     }
-
-    // If the user is a member but has no committee role, they only have access to basic features
     if ($user_role === 'member' && empty($committee_role)) {
         return in_array('member', $required_roles);
     }
-
-    // If none of the above matched, return false (user has no access)
     return false;
 }
 
 // User ID from session
 $user_id = $_SESSION['user_id'];
+// Fetch username
+$username_sql = "SELECT username FROM users WHERE id = ?";
+$username_stmt = $conn->prepare($username_sql);
+$username_stmt->bind_param("i", $user_id);
+$username_stmt->execute();
+$username_result = $username_stmt->get_result();
+$user_data = $username_result->fetch_assoc();
+$username = $user_data['username'] ?? 'User';
+$username_stmt->close();
 
 // Handle event_id from URL
 if (isset($_GET['event_id'])) {
@@ -153,6 +155,31 @@ try {
         $committee_role = $user_event_info['committee_role'] ?? '';
     }
     
+    // Get all event members with their details
+    if ($event) {
+        $members_sql = "SELECT u.id, u.username, u.online_status, em.role, em.committee_role, em.joined_at
+                       FROM event_members em 
+                       JOIN users u ON em.user_id = u.id 
+                       WHERE em.event_id = ? AND em.status = 'active'
+                       ORDER BY 
+                           CASE 
+                               WHEN em.role = 'admin' THEN 1
+                               WHEN em.role = 'organizer' THEN 2
+                               ELSE 3 
+                           END,
+                           CASE 
+                               WHEN em.committee_role = 'chairman' THEN 1
+                               WHEN em.committee_role = 'secretary' THEN 2
+                               WHEN em.committee_role = 'treasurer' THEN 3
+                               ELSE 4 
+                           END,
+                           u.username ASC";
+        $members_stmt = $conn->prepare($members_sql);
+        $members_stmt->bind_param("i", $event['id']);
+        $members_stmt->execute();
+        $members = $members_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    }
+    
     if (!$event && empty($events)) {
         $error_message = "No events found. Please create or join an event.";
     }
@@ -179,7 +206,6 @@ if (isset($_SESSION['last_activity']) && (time() - $_SESSION['last_activity']) >
 
 $_SESSION['last_activity'] = time();
 ?>
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -396,7 +422,113 @@ $_SESSION['last_activity'] = time();
             font-size: 18px;
             font-weight: 500;
         }
+        .members-section {
+            margin-top: 40px;
+            background: rgba(8, 27, 41, 0.9);
+            border: 2px solid #0ef;
+            border-radius: 15px;
+            padding: 30px;
+        }
 
+        .members-title {
+            color: #0ef;
+            font-size: 24px;
+            margin-bottom: 25px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .members-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 25px;
+            margin-top: 20px;
+        }
+
+        .member-card {
+            background: rgba(0, 238, 255, 0.05);
+            border: 1px solid rgba(0, 238, 255, 0.2);
+            border-radius: 10px;
+            padding: 15px;
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+
+        .member-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 5px 15px rgba(0, 238, 255, 0.1);
+        }
+
+        .member-avatar {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            margin: 0 auto 15px;
+            background: #0ef;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            color: #081b29;
+            border: 2px solid rgba(0, 238, 255, 0.5);
+        }
+
+        .member-name {
+            color: #fff;
+            font-size: 16px;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+
+        .member-role {
+            color: rgba(0, 238, 255, 0.8);
+            font-size: 14px;
+            margin-bottom: 5px;
+        }
+
+        .member-committee {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 12px;
+        }
+
+        .online-status {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-left: 5px;
+        }
+
+        .online-status.online {
+            background: #00ff00;
+        }
+
+        .online-status.offline {
+            background: #ff0000;
+        }
+        .welcome-message {
+    position: fixed;
+    top: 60px;
+    right: 30px;
+    background: rgba(0, 238, 255, 0.1);
+    padding: 10px 20px;
+    border-radius: 10px;
+    border: 1px solid #0ef;
+    color: #fff;
+    font-size: 16px;
+    z-index: 99;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.welcome-message::before {
+    content: '\f2bd';
+    font-family: 'boxicons';
+    color: #0ef;
+    font-size: 20px;
+}
         .error-message {
             color: #ff3333;
             background: rgba(255, 51, 51, 0.1);
@@ -518,8 +650,10 @@ $_SESSION['last_activity'] = time();
     </div>
 </nav>
 
-
-    <main class="main-content">
+<main class="main-content">
+<div class="welcome-message">
+    Welcome, <?php echo htmlspecialchars(ucfirst($username)); ?>!
+</div>
         <div class="event-details-container">
             <?php if (isset($error_message)): ?>
                 <div class="error-message">
@@ -552,17 +686,8 @@ $_SESSION['last_activity'] = time();
 
                     <div class="info-card">
                         <i class='bx bx-group'></i>
-                        <div class="info-label">Members</div>
-                        <div class="info-value">
-                            <?php 
-                            $member_count_sql = "SELECT COUNT(*) as count FROM event_members WHERE event_id = ? AND status = 'active'";
-                            $count_stmt = $conn->prepare($member_count_sql);
-                            $count_stmt->bind_param("i", $event['id']);
-                            $count_stmt->execute();
-                            $count = $count_stmt->get_result()->fetch_assoc()['count'];
-                            echo $count;
-                            ?>
-                        </div>
+                        <div class="info-label">Total Members</div>
+                        <div class="info-value"><?php echo count($members); ?></div>
                     </div>
 
                     <div class="info-card">
@@ -571,38 +696,62 @@ $_SESSION['last_activity'] = time();
                         <div class="info-value"><?php echo ucfirst(htmlspecialchars($event['status'])); ?></div>
                     </div>
 
-                    <?php
-                    // Get user's role in this event
-                    $role_sql = "SELECT role, committee_role FROM event_members WHERE event_id = ? AND user_id = ?";
-                    $role_stmt = $conn->prepare($role_sql);
-                    $role_stmt->bind_param("ii", $event['id'], $user_id);
-                    $role_stmt->execute();
-                    $role_info = $role_stmt->get_result()->fetch_assoc();
-                    ?>
                     <div class="info-card">
                         <i class='bx bx-user'></i>
                         <div class="info-label">Your Role</div>
                         <div class="info-value">
                             <?php 
-                            echo ucfirst(htmlspecialchars($role_info['role']));
-                            if ($role_info['committee_role']) {
-                                echo " - " . htmlspecialchars($role_info['committee_role']);
+                            echo ucfirst(htmlspecialchars($user_role));
+                            if ($committee_role) {
+                                echo " - " . ucfirst(htmlspecialchars($committee_role));
                             }
                             ?>
                         </div>
                     </div>
                 </div>
+
+                <!-- Members Grid Section -->
+                <div class="members-section">
+                    <h2 class="members-title">
+                        <i class='bx bx-group'></i>
+                        Event Members
+                    </h2>
+                    <div class="members-grid">
+                        <?php foreach ($members as $member): ?>
+                            <div class="member-card">
+                                <div class="member-avatar">
+                                    <?php echo strtoupper(substr($member['username'], 0, 1)); ?>
+                                </div>
+                                <div class="member-name">
+                                    <?php echo htmlspecialchars($member['username']); ?>
+                                    <span class="online-status <?php echo $member['online_status'] == 'online' ? 'online' : 'offline'; ?>"></span>
+                                </div>
+                                <div class="member-role">
+                                    <?php echo ucfirst(htmlspecialchars($member['role'])); ?>
+                                </div>
+                                <?php if ($member['committee_role']): ?>
+                                    <div class="member-committee">
+                                        <?php echo ucfirst(htmlspecialchars($member['committee_role'])); ?>
+                                    </div>
+                                <?php endif; ?>
+                                <div class="member-joined">
+                                    Joined: <?php echo date('M d, Y', strtotime($member['joined_at'])); ?>
+                                </div>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+
             <?php else: ?>
-                <div style="text-align: center; color: #fff; padding: 40px 20px;">
-                    <i class='bx bx-calendar-x' style="font-size: 48px; color: #0ef; margin-bottom: 15px; display: block;"></i>
+                <div class="no-event-message">
+                    <i class='bx bx-calendar-x'></i>
                     <p>No event found. Please create or join an event first.</p>
-                    <a href="create_event.php" style="display: inline-block; margin-top: 20px; padding: 10px 20px; background: #0ef; color: #081b29; text-decoration: none; border-radius: 5px;">Create Event</a>
+                    <a href="create_event.php" class="create-event-btn">Create Event</a>
                 </div>
             <?php endif; ?>
         </div>
     </main>
 
-    <!-- Notification for copy success -->
     <div id="copyNotification" class="copy-success">
         Code copied successfully!
     </div>
