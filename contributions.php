@@ -10,8 +10,7 @@ if ($event_id === 0) {
     exit;
 }
 
-// First, get event details
-// First, get event details
+// Fetch event details
 $event_sql = "SELECT event_name FROM events WHERE id = ?";
 $stmt = $conn->prepare($event_sql);
 $stmt->bind_param("i", $event_id);
@@ -23,21 +22,22 @@ if ($event_result->num_rows > 0) {
     $event_name = $event_row['event_name'];
 }
 
-$sql = "SELECT c.phone_number, c.amount, c.contribution_date, u.username 
+// Fetch contributions for the specific event
+$sql = "SELECT c.sender_phone, c.amount, c.created_at, u.username 
         FROM contributions c
         LEFT JOIN users u ON c.user_id = u.id
         WHERE c.event_id = ? 
-        ORDER BY c.contribution_date DESC";
+        ORDER BY c.created_at DESC";
 $stmt = $conn->prepare($sql);
 $stmt->bind_param("i", $event_id);
 $stmt->execute();
 $result = $stmt->get_result();
 
-// Update the summary query to maintain existing functionality
+// Fetch summary for the specific event
 $total_sql = "SELECT 
     COUNT(*) as total_contributions,
     SUM(amount) as total_amount,
-    COUNT(DISTINCT phone_number) as unique_contributors
+    COUNT(DISTINCT sender_phone) as unique_contributors
     FROM contributions 
     WHERE event_id = ?";
 $stmt = $conn->prepare($total_sql);
@@ -497,83 +497,57 @@ $summary = $stmt->get_result()->fetch_assoc();
         </div>
 
         <div class="content-section">
-        <!-- Event Selector -->
-        <div class="event-selector">
-            <select onchange="window.location.href='?event_id=' + this.value">
+    <!-- Summary Box -->
+    <?php if ($event_name): ?>
+    <div class="summary-box">
+        <h4>Contribution Summary for <?php echo htmlspecialchars($event_name); ?></h4>
+        <div class="summary-item">
+    <span>Total Contributions:</span>
+    <span><?php echo $summary['total_contributions'] ?? 0; ?></span>
+</div>
+        <div class="summary-item">
+    <span>Total Amount:</span>
+    <span>KES <?php echo number_format($summary['total_amount'] ?? 0, 2); ?></span>
+       </div>
+
+       <div class="summary-item">
+    <span>Unique Contributors:</span>
+    <span><?php echo $summary['unique_contributors'] ?? 0; ?></span>
+     </div>
+    </div>
+    <?php endif; ?>
+
+    <!-- Contributions Table -->
+    <h3 class="section-title">Contributions List</h3>
+    <div class="table-container">
+        <table class="contribution-table">
+            <thead>
+                <tr>
+                    <th>Username</th>
+                    <th>Phone Number</th>
+                    <th>Amount (KES)</th>
+                    <th>Contribution Date</th>
+                </tr>
+            </thead>
+            <tbody>
                 <?php
-                $events_sql = "SELECT id, event_name FROM events ORDER BY event_name";
-                $events_result = $conn->query($events_sql);
-                while ($event = $events_result->fetch_assoc()) {
-                    $selected = ($event['id'] == $event_id) ? 'selected' : '';
-                    echo "<option value='{$event['id']}' {$selected}>{$event['event_name']}</option>";
+                if ($result && $result->num_rows > 0) {
+                    while($row = $result->fetch_assoc()) {
+                        echo "<tr>";
+                        echo "<td>" . htmlspecialchars($row["username"] ?? 'Unknown User') . "</td>";
+                        echo "<td>" . htmlspecialchars($row["sender_phone"]) . "</td>";
+                        echo "<td>" . number_format($row["amount"], 2) . "</td>";
+                        echo "<td>" . htmlspecialchars($row["created_at"]) . "</td>";
+                        echo "</tr>";
+                    }
+                } else {
+                    echo "<tr><td colspan='4' class='no-data'>No contributions found for this event</td></tr>";
                 }
                 ?>
-            </select>
-        </div>
-
-        <!-- Summary Box -->
-        <?php if ($event_name): ?>
-        <div class="summary-box">
-            <h4>Contribution Summary for <?php echo htmlspecialchars($event_name); ?></h4>
-            <?php
-            $total_sql = "SELECT 
-                COUNT(*) as total_contributions,
-                SUM(amount) as total_amount,
-                COUNT(DISTINCT phone_number) as unique_contributors
-                FROM contributions 
-                WHERE event_id = ?";
-            $stmt = $conn->prepare($total_sql);
-            $stmt->bind_param("i", $event_id);
-            $stmt->execute();
-            $summary = $stmt->get_result()->fetch_assoc();
-            ?>
-            <div class="summary-item">
-                <span>Total Contributions:</span>
-                <span><?php echo $summary['total_contributions']; ?></span>
-            </div>
-            <div class="summary-item">
-                <span>Total Amount:</span>
-                <span>KES <?php echo number_format($summary['total_amount'], 2); ?></span>
-            </div>
-            <div class="summary-item">
-                <span>Unique Contributors:</span>
-                <span><?php echo $summary['unique_contributors']; ?></span>
-            </div>
-        </div>
-        <?php endif; ?>
-
-        <!-- Contributions Table -->
-        <h3 class="section-title">Contributions List</h3>
-        <div class="table-container">
-    <table class="contribution-table">
-        <thead>
-            <tr>
-                <th>Username</th>
-                <th>Phone Number</th>
-                <th>Amount (KES)</th>
-                <th>Contribution Date</th>
-            </tr>
-        </thead>
-        <tbody>
-            <?php
-            if ($result && $result->num_rows > 0) {
-                while($row = $result->fetch_assoc()) {
-                    echo "<tr>";
-                    echo "<td>" . htmlspecialchars($row["username"] ?? 'Unknown User') . "</td>";
-                    echo "<td>" . htmlspecialchars($row["phone_number"]) . "</td>";
-                    echo "<td>" . number_format($row["amount"], 2) . "</td>";
-                    echo "<td>" . htmlspecialchars($row["contribution_date"]) . "</td>";
-                    echo "</tr>";
-                }
-            } else {
-                echo "<tr><td colspan='4' class='no-data'>No contributions found for this event</td></tr>";
-            }
-            ?>
-        </tbody>
-    </table>
-</div>
+            </tbody>
+        </table>
     </div>
-
+</div>
     <script>
         // Toggle sidebar
         const toggleBtn = document.querySelector('.toggle-btn');

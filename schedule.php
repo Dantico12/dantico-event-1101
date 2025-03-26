@@ -4,6 +4,21 @@ require_once 'db.php';
 // Timezone setting
 date_default_timezone_set('Africa/Nairobi');
 
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'join_meeting') {
+    $meeting_id = $_POST['meeting_id'] ?? '';
+    
+    if ($meeting_id) {
+        $redirect_url = 'video-conference.php?' . http_build_query([
+            'event_id' => $_SESSION['current_event_id'],
+            'event_code' => $_SESSION['current_event_code'],
+            'meeting_id' => $meeting_id
+        ]);
+        
+        header("Location: " . $redirect_url);
+        exit;
+    }
+}
 // Validate event session
 if (!isset($_SESSION['current_event_id']) || !isset($_SESSION['current_event_code'])) {
     header("Location: events.php");
@@ -23,7 +38,6 @@ function getEventContextURL($additional_params = []) {
     $params = array_merge($base_params, $additional_params);
     return '?' . http_build_query($params);
 }
-
 // Get event details
 function getEventDetails($conn, $event_id) {
     $stmt = $conn->prepare("SELECT event_name FROM events WHERE id = ?");
@@ -741,17 +755,16 @@ $meetings = getMeetings($conn, $current_event_id);
     <td><?php echo date('M d, Y h:i A', strtotime($meeting['created_at'])); ?></td>
     <td class="meeting-action">
     <?php if ($meeting_status['status'] === 'scheduled'): ?>
-        <a href="#" 
-           class="join-btn disabled" 
-           data-meeting-url="<?php echo htmlspecialchars('video-conference.php' . getEventContextURL(['meeting_id' => $meeting['id']])); ?>">
+        <button type="button" class="join-btn disabled">
             Join Meeting
-        </a>
+        </button>
         <span class="countdown"></span>
     <?php elseif ($meeting_status['status'] === 'in progress'): ?>
-        <a href="video-conference.php<?php echo htmlspecialchars(getEventContextURL(['meeting_id' => $meeting['id']])); ?>" 
-           class="join-btn">
-            Join Now
-        </a>
+        <form method="POST" style="display: inline;">
+            <input type="hidden" name="meeting_id" value="<?php echo $meeting['id']; ?>">
+            <input type="hidden" name="action" value="join_meeting">
+            <button type="submit" class="join-btn">Join Now</button>
+        </form>
     <?php else: ?>
         <span class="ended-status">
             Meeting Ended on <?php echo date('M d, Y', strtotime($meeting['formatted_date'])); ?>
@@ -815,6 +828,7 @@ function updateMeetingStatusesAndButtons() {
             const joinBtn = actionCell.querySelector('.join-btn');
             const countdownSpan = actionCell.querySelector('.countdown');
             const meetingUrl = joinBtn ? joinBtn.dataset.meetingUrl : '';
+
 
             // Update meeting status based on time differences
             if (timeToStart > 0) {
@@ -886,11 +900,11 @@ function handleFutureMeeting(joinBtn, countdownSpan, timeToStart) {
 
 function handleInProgressMeeting(actionCell, meetingUrl) {
     actionCell.innerHTML = `
-        <a href="video-conference.php${meetingUrl}" 
-           class="join-btn"
-           onclick="return confirmJoinMeeting(event)">
-            Join Now
-        </a>
+        <form method="POST" style="display: inline;">
+           <input type="hidden" name="meeting_id" value="${meetingUrl.split('meeting_id=')[1]}">
+            <input type="hidden" name="action" value="join_meeting">
+            <button type="submit" class="join-btn">Join Now</button>
+        </form>
     `;
 }
 

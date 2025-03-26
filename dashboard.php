@@ -680,8 +680,8 @@ $_SESSION['last_activity'] = time();
                 <div class="event-info-grid">
                     <div class="info-card">
                         <i class='bx bx-calendar'></i>
-                        <div class="info-label">Created Date</div>
-                        <div class="info-value"><?php echo date('F d, Y', strtotime($event['created_at'])); ?></div>
+                        <div class="info-label">Event Date</div>
+                        <div class="info-value"><?php echo date('F d, Y', strtotime($event['event_datetime'])); ?></div>
                     </div>
 
                     <div class="info-card">
@@ -689,11 +689,11 @@ $_SESSION['last_activity'] = time();
                         <div class="info-label">Total Members</div>
                         <div class="info-value"><?php echo count($members); ?></div>
                     </div>
-
+               
                     <div class="info-card">
-                        <i class='bx bx-check-circle'></i>
-                        <div class="info-label">Status</div>
-                        <div class="info-value"><?php echo ucfirst(htmlspecialchars($event['status'])); ?></div>
+                    <i class='bx bxs-map'></i>
+                        <div class="info-label">Location</div>
+                        <div class="info-value"><?php echo ucfirst(htmlspecialchars($event['location'])); ?></div>
                     </div>
 
                     <div class="info-card">

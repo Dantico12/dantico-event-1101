@@ -14,7 +14,6 @@ if (!$conn) {
 }
 
 function generateEventCode($event_name) {
-    // Create a unique event code
     $base = substr(preg_replace('/[^A-Za-z0-9]/', '', $event_name), 0, 3);
     $random = substr(str_shuffle('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'), 0, 7);
     return strtoupper($base . $random);
@@ -24,7 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     error_log("POST data received: " . print_r($_POST, true));
     
     // Validate required fields
-    $required_fields = ['event_name'];
+    $required_fields = ['event_name', 'event_datetime', 'location', 'event_type', 'max_participants'];
     $missing_fields = [];
     
     foreach ($required_fields as $field) {
@@ -42,26 +41,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $conn->begin_transaction();
 
             $event_name = trim($_POST['event_name']);
+            $event_datetime = $_POST['event_datetime'];
+            $location = $_POST['location'];
+            $event_type = $_POST['event_type'];
+            $max_participants = $_POST['max_participants'];
+            $phone_paybill = isset($_POST['phone_paybill']) ? $_POST['phone_paybill'] : null;
             
             // Generate unique event code
             do {
                 $event_code = generateEventCode($event_name);
-                // Check if code exists
                 $check_code = $conn->prepare("SELECT 1 FROM events WHERE event_code = ?");
                 $check_code->bind_param("s", $event_code);
                 $check_code->execute();
                 $result = $check_code->get_result();
             } while ($result->num_rows > 0);
             
-            // Insert event with simplified schema
-            $sql = "INSERT INTO events (event_name, event_code, status) VALUES (?, ?, 'active')";
+            // Insert event with all fields
+            $sql = "INSERT INTO events (
+                event_name, 
+                event_code, 
+                status, 
+                created_at,
+                phone_paybill,
+                event_type,
+                event_datetime,
+                location,
+                max_participants
+            ) VALUES (?, ?, 'active', NOW(), ?, ?, ?, ?, ?)";
+            
             $stmt = $conn->prepare($sql);
             
             if (!$stmt) {
                 throw new Exception("Prepare failed: " . $conn->error);
             }
             
-            $stmt->bind_param("ss", $event_name, $event_code);
+            $stmt->bind_param("ssssssi", 
+                $event_name, 
+                $event_code, 
+                $phone_paybill,
+                $event_type,
+                $event_datetime,
+                $location,
+                $max_participants
+            );
             
             if (!$stmt->execute()) {
                 throw new Exception("Execute failed: " . $stmt->error);

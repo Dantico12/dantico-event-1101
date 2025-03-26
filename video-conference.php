@@ -438,7 +438,7 @@ $initial_meeting_info = getCurrentMeetingInfo($conn, $current_event_id);
     // Initialize Agora configuration
     const AGORA_CONFIG = {
         APP_ID: "85fd346d881b42b39d7a3fd84c178ea4",
-        TOKEN: "007eJxTYOj82nR8ue+EUz/4jhZM3zhrYennnBUrPHM26RVNuW8YvihfgcHCNC3F2MQsxcLCMMnEKMnYMsU80TgtxcIk2dDcIjXRRHPpivSGQEYGZ/UmJkYGCATxeRlcEvNKMpPzdVPLUvNKGBgAU8QkoA==",
+        TOKEN: "007eJxTYGg7dH5bDPP8UvmlPqyqIZOdnVnso79cMf3PrC14/VeiTZYCg4VpWoqxiVmKhYVhkolRkrFlinmicVqKhUmyoblFaqLJxan70hsCGRk0860YGRkgEMTnZXBJzCvJTM7XTS1LzSthYAAAy5ggzg==",
         CHANNEL: "Dantico-event"
     };
 

@@ -327,8 +327,8 @@ if ($stmt = $conn->prepare($members_query)) {
                 </a>
             </li>
             <li>
-                <a href="add_committee.php?event_id=<?php echo $event_id; ?>"
-                   class="<?php echo $current_page === 'add_committee.php' ? 'active' : ''; ?>">
+                <a href="add-committee.php?event_id=<?php echo $event_id; ?>"
+                   class="<?php echo $current_page === 'add-committee.php' ? 'active' : ''; ?>">
                     <i class='bx bx-user-plus'></i> Committee
                 </a>
             </li>

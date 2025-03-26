@@ -114,14 +114,47 @@ class MpesaGateway {
     }
     private function insertTransaction($orderRef, $phone, $amount, $event_id, $user_id, $mpesaResponse) {
         $status = 'pending';
-        $stmt = $this->conn->prepare("INSERT INTO contributions (order_ref, event_id, phone_number, amount, mpesa_response, status, contribution_date, user_id) VALUES (?, ?, ?, ?, ?, ?, NOW(), ?)");
+        $stmt = $this->conn->prepare("INSERT INTO contributions (
+            sender_phone, 
+            amount,
+            event_id,
+            user_id,
+            checkout_request_id,
+            transaction_status,
+            mpesa_response
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)");
         
         if ($stmt) {
-            $stmt->bind_param("sissssi", $orderRef, $event_id, $phone, $amount, $mpesaResponse, $status, $user_id);
+            $checkoutRequestId = json_decode($mpesaResponse, true)['CheckoutRequestID'] ?? null;
+            $stmt->bind_param("sdiiiss", 
+                $phone, 
+                $amount, 
+                $event_id, 
+                $user_id,
+                $checkoutRequestId,
+                $status,
+                $mpesaResponse
+            );
             $stmt->execute();
             $stmt->close();
         } else {
             throw new Exception('Database insert failed: ' . $this->conn->error);
+        }
+    }
+
+    public function updateTransactionStatus($checkoutRequestId, $transactionStatus, $mpesaReceiptNumber = null) {
+        $stmt = $this->conn->prepare("UPDATE contributions SET 
+            transaction_status = ?,
+            mpesa_receipt_number = ?
+            WHERE checkout_request_id = ?");
+            
+        if ($stmt) {
+            $stmt->bind_param("sss", $transactionStatus, $mpesaReceiptNumber, $checkoutRequestId);
+            $result = $stmt->execute();
+            $stmt->close();
+            return $result;
+        } else {
+            throw new Exception('Database update failed: ' . $this->conn->error);
         }
     }
 
