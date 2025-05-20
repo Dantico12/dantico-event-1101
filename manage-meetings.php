@@ -416,12 +416,7 @@ if ($stmt = $conn->prepare($meetings_query)) {
                             </span>
                         </td>
                         <td>
-    <?php if ($meeting['status'] !== 'Ended'): ?>
-    <button type="button" class="btn btn-warning" 
-            onclick="endMeeting(<?php echo $meeting['meeting_id']; ?>)">
-        <i class='bx bx-time'></i> End Meeting
-    </button>
-    <?php endif; ?>
+   
     <form method="POST" style="display: inline;">
         <input type="hidden" name="meeting_id" value="<?php echo $meeting['meeting_id']; ?>">
         <button type="submit" name="delete_meeting" class="btn btn-danger"

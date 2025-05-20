@@ -14,9 +14,23 @@ if (!$conn) {
 }
 
 function generateEventCode($event_name) {
-    $base = substr(preg_replace('/[^A-Za-z0-9]/', '', $event_name), 0, 3);
-    $random = substr(str_shuffle('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'), 0, 7);
-    return strtoupper($base . $random);
+    // Break event name into words
+    $words = preg_split('/\s+/', strtoupper(preg_replace('/[^A-Za-z\s]/', '', $event_name)));
+    
+    // Get first two letters of first two words
+    $firstPart = '';
+    if (count($words) >= 2) {
+        $firstPart = substr($words[0], 0, 2) . substr($words[1], 0, 2);
+    } elseif (count($words) == 1) {
+        $firstPart = substr($words[0], 0, 4);
+    } else {
+        $firstPart = 'EVNT'; // fallback
+    }
+
+    // Generate random 2-digit number
+    $randomNumber = rand(10, 99);
+
+    return strtoupper($firstPart . $randomNumber);
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -41,9 +55,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $conn->begin_transaction();
 
             $event_name = trim($_POST['event_name']);
-            $event_datetime = $_POST['event_datetime'];
             $location = $_POST['location'];
             $event_type = $_POST['event_type'];
+            $event_datetime = $_POST['event_datetime'];
             $max_participants = $_POST['max_participants'];
             $phone_paybill = isset($_POST['phone_paybill']) ? $_POST['phone_paybill'] : null;
             
@@ -121,6 +135,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 ?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -310,5 +325,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </form>
         </div>
     </div>
+    <script>
+document.addEventListener('DOMContentLoaded', function () {
+    const dateInput = document.getElementById('event_datetime');
+    let warningTimeout; // to store timeout reference
+
+    dateInput.addEventListener('input', function () {
+        const selectedDate = new Date(this.value);
+        const today = new Date();
+        const minValidDate = new Date();
+        minValidDate.setDate(today.getDate() + 7);
+
+        let warning = document.getElementById('date-warning');
+
+        if (!warning) {
+            warning = document.createElement('div');
+            warning.id = 'date-warning';
+            warning.style.color = 'red';
+            warning.style.marginTop = '5px';
+            dateInput.parentNode.appendChild(warning);
+        }
+
+        if (selectedDate < minValidDate) {
+            warning.textContent = '⚠️ Event date must be at least one week from today.';
+
+            // Reset previous timeout
+            if (warningTimeout) clearTimeout(warningTimeout);
+
+            // Start a new timeout to hide after 5 seconds
+            warningTimeout = setTimeout(() => {
+                warning.textContent = '';
+            }, 5000);
+        } else {
+            warning.textContent = '';
+            if (warningTimeout) clearTimeout(warningTimeout);
+        }
+    });
+});
+</script>
+
+
 </body>
 </html>

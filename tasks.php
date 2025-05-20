@@ -4,6 +4,34 @@ require_once "db.php";
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
+// Function to fetch user roles from database
+function getUserRoles($conn, $user_id, $event_id) {
+    $sql = "SELECT em.role, em.committee_role 
+            FROM event_members em
+            WHERE em.user_id = ? AND em.event_id = ? AND em.status = 'active'";
+    
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param("ii", $user_id, $event_id);
+    $stmt->execute();
+    return $stmt->get_result()->fetch_assoc();
+}
+
+// Function to check user's role access
+function hasAccess($required_roles, $user_role, $committee_role) {
+    if ($user_role === 'admin' || $user_role === 'organizer') {
+        return true;
+    }
+    $required_roles = array_map('strtolower', $required_roles);
+    if ($user_role === 'member' && !empty($committee_role)) {
+        $committee_role = strtolower($committee_role);
+        return in_array($committee_role, $required_roles);
+    }
+    if ($user_role === 'member' && empty($committee_role)) {
+        return in_array('member', $required_roles);
+    }
+    return false;
+}
+
 // Function to generate base URL with event context
 function getEventContextURL() {
     $base_url = '';
@@ -14,8 +42,36 @@ function getEventContextURL() {
     return $base_url;
 }
 
+// Initialize user roles
+$user_role = '';
+$committee_role = '';
+if (isset($_SESSION['user_id']) && isset($_SESSION['current_event_id'])) {
+    $user_roles = getUserRoles($conn, $_SESSION['user_id'], $_SESSION['current_event_id']);
+    $user_role = $user_roles['role'] ?? '';
+    $committee_role = $user_roles['committee_role'] ?? '';
+    
+    // Store in session for later use
+    $_SESSION['user_role'] = $user_role;
+    $_SESSION['committee_role'] = $committee_role;
+} else {
+    // Fallback to session values if they exist
+    $user_role = $_SESSION['user_role'] ?? '';
+    $committee_role = $_SESSION['committee_role'] ?? '';
+}
+
 // Get the event context URL to be used across navigation
 $base_url = getEventContextURL();
+
+// Check if user has access to view this page
+$required_roles = ['Admin', 'Organizer', 'Member', 'Chairman', 'Secretary', 'Treasurer'];
+if (!hasAccess($required_roles, $user_role, $committee_role)) {
+    header("Location: access-denied.php");
+    exit();
+}
+
+// Define permission for task management (used in the view)
+$hasPermission = hasAccess(['Admin', 'Organizer', 'Secretary'], $user_role, $committee_role);
+
 // Session validation
 if (!isset($_SESSION['current_event_id']) || !isset($_SESSION['user_id'])) {
     header("Location: events.php");
@@ -27,37 +83,28 @@ $current_user_id = $_SESSION['user_id'];
 
 // Get event details
 function getEventDetails($conn, $event_id) {
-    $stmt = $conn->prepare("SELECT event_name FROM events WHERE id = ?");
+    $stmt = $conn->prepare("SELECT event_name, event_code FROM events WHERE id = ?");
     $stmt->bind_param("i", $event_id);
     $stmt->execute();
     $result = $stmt->get_result();
     return $result->fetch_assoc();
 }
 
-// Check user permission
-function checkUserPermission($conn, $user_id, $event_id) {
-    $stmt = $conn->prepare("
-        SELECT role 
-        FROM event_members 
-        WHERE user_id = ? AND event_id = ? 
-        AND role IN ('admin', 'secretary') 
-        AND status = 'active'
-    ");
-    $stmt->bind_param("ii", $user_id, $event_id);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    return $result->num_rows > 0;
-}
-
 // Get tasks with error handling
-function getTasks($conn, $event_id) {
+function getTasks($conn, $event_id, $user_id = null, $user_role = null) {
     $query = "SELECT 
                 t.*,
                 COALESCE(u.username, 'Unassigned') as assigned_username
               FROM tasks t 
               LEFT JOIN users u ON t.assigned_to = u.id 
-              WHERE t.event_id = ? 
-              ORDER BY t.created_at DESC";
+              WHERE t.event_id = ?";
+    
+    // Filter tasks based on user role
+    if ($user_role === 'member') {
+        $query .= " AND (t.assigned_to = ? OR t.assigned_to IS NULL)";
+    }
+    
+    $query .= " ORDER BY t.created_at DESC";
               
     $stmt = $conn->prepare($query);
     if (!$stmt) {
@@ -65,7 +112,12 @@ function getTasks($conn, $event_id) {
         return [];
     }
     
-    $stmt->bind_param("i", $event_id);
+    if ($user_role === 'member') {
+        $stmt->bind_param("ii", $event_id, $user_id);
+    } else {
+        $stmt->bind_param("i", $event_id);
+    }
+    
     if (!$stmt->execute()) {
         error_log("Execute failed: " . $stmt->error);
         return [];
@@ -77,7 +129,7 @@ function getTasks($conn, $event_id) {
 
 // Process task actions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $hasPermission = checkUserPermission($conn, $current_user_id, $current_event_id);
+    // Only allow actions if user has permission
     if (!$hasPermission) {
         echo json_encode(['error' => 'unauthorized']);
         exit;
@@ -100,14 +152,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     echo $stmt->execute() ? 'success' : 'error';
                 }
                 exit;
+                
+            case 'update_status':
+                // Allow task assignees to update their own task status
+                if (isset($_POST['task_id']) && isset($_POST['status'])) {
+                    $task_id = $_POST['task_id'];
+                    $status = $_POST['status'];
+                    
+                    // Verify the task belongs to the current user if they're not an admin/secretary
+                    if (!hasAccess(['Admin', 'Organizer', 'Secretary'], $user_role, $committee_role)) {
+                        $check_stmt = $conn->prepare("SELECT assigned_to FROM tasks WHERE task_id = ? AND event_id = ?");
+                        $check_stmt->bind_param("ii", $task_id, $current_event_id);
+                        $check_stmt->execute();
+                        $check_result = $check_stmt->get_result();
+                        $task = $check_result->fetch_assoc();
+                        
+                        if ($task['assigned_to'] != $current_user_id) {
+                            echo json_encode(['error' => 'unauthorized']);
+                            exit;
+                        }
+                    }
+                    
+                    $stmt = $conn->prepare("UPDATE tasks SET status = ? WHERE task_id = ? AND event_id = ?");
+                    $stmt->bind_param("sii", $status, $task_id, $current_event_id);
+                    echo $stmt->execute() ? 'success' : 'error';
+                }
+                exit;
         }
     }
 }
 
 // Get event details and tasks
 $event = getEventDetails($conn, $current_event_id);
-$hasPermission = checkUserPermission($conn, $current_user_id, $current_event_id);
-$tasks = getTasks($conn, $current_event_id);
+$_SESSION['current_event_code'] = $event['event_code']; // Store event code in session
+
+// Get tasks based on user role
+if ($user_role === 'member') {
+    $tasks = getTasks($conn, $current_event_id, $current_user_id, $user_role);
+} else {
+    $tasks = getTasks($conn, $current_event_id);
+}
 
 // Handle AJAX request for task details
 if (isset($_GET['task_id'])) {
@@ -120,6 +204,7 @@ if (isset($_GET['task_id'])) {
     exit;
 }
 ?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -380,15 +465,14 @@ if (isset($_GET['task_id'])) {
     </style>
 </head>
 <body>
-    
-<!-- Sidebar Navigation -->
-<nav class="sidebar">
+
+<nav class="sidebar" <?= !hasAccess(['Treasurer', 'Secretary', 'Chairman', 'Admin', 'member'], $user_role, $committee_role) ? 'style="display: none;"' : '' ?>>
     <div class="sidebar-header">
         <i class='bx bx-calendar-event' style="color: #0ef; font-size: 24px;"></i>
         <h2>Dantico Events</h2>
     </div>
     <div class="sidebar-menu">
-        <!-- Dashboard -->
+        <!-- Dashboard (accessible to all) -->
         <div class="menu-category">
             <div class="menu-item active">
                 <a href="./dashboard.php<?= $base_url ?>">
@@ -398,9 +482,21 @@ if (isset($_GET['task_id'])) {
             </div>
         </div>
 
+        <!-- Paybill Section (Visible only to Treasurer and Admin) -->
+        <?php if (hasAccess(['Treasurer', 'Admin'], $user_role, $committee_role)): ?>
+        <div class="menu-category">
+            <div class="category-title">Paybill</div>
+            <div class="menu-item">
+                <a href="./paybill.php<?= $base_url ?>">
+                    <i class='bx bx-plus-circle'></i>
+                    <span>Add Paybill</span>
+                </a>
+            </div>
+        </div>
+        <?php endif; ?>
+
         <!-- Committees Section -->
         <div class="menu-category">
-            
             <div class="menu-item">
                 <a href="./committee-list.php<?= $base_url ?>">
                     <i class='bx bx-group'></i>
@@ -409,7 +505,20 @@ if (isset($_GET['task_id'])) {
             </div>
         </div>
 
-        <!-- Communication Section -->
+        <!-- Minutes Section (Visible only to Secretary) -->
+        <?php if (hasAccess(['Secretary'], $user_role, $committee_role)): ?>
+        <div class="menu-category">
+            <div class="category-title">Reviews</div>
+            <div class="menu-item">
+                <a href="./minutes.php<?= $base_url ?>">
+                    <i class='bx bxs-timer'></i>
+                    <span>Minutes</span>
+                </a>
+            </div>
+        </div>
+        <?php endif; ?>
+
+        <!-- Communication Section (accessible to all) -->
         <div class="menu-category">
             <div class="category-title">Communication</div>
             <div class="menu-item">
@@ -427,7 +536,7 @@ if (isset($_GET['task_id'])) {
             </div>
         </div>
 
-        <!-- Contributions Section -->
+        <!-- Contributions Section (accessible to all) -->
         <div class="menu-category">
             <div class="category-title">Contributions</div>
             <div class="menu-item">
@@ -444,19 +553,18 @@ if (isset($_GET['task_id'])) {
             </div>
         </div>
 
-        <!-- Reviews Section -->
+        <!-- Tasks Section (accessible to all) -->
         <div class="menu-category">
-            
+            <div class="category-title">Tasks</div>
             <div class="menu-item">
                 <a href="./tasks.php<?= $base_url ?>">
                     <i class='bx bx-task'></i>
                     <span>Tasks</span>
                 </a>
             </div>
-            
         </div>
 
-        <!-- Other Tools -->
+        <!-- Schedule Section (accessible to all) -->
         <div class="menu-category">
             <div class="category-title">Tools</div>
             <div class="menu-item">
@@ -465,112 +573,113 @@ if (isset($_GET['task_id'])) {
                     <span>Schedule</span>
                 </a>
             </div>
-          
         </div>
     </div>
 </nav>
+
 <div class="main-content">
-        <div class="header">
-            <button class="toggle-btn">
-                <i class='bx bx-menu'></i>
-            </button>
-            <h2 class="header-title">Tasks for <?php echo htmlspecialchars($event['event_name'] ?? 'Event'); ?></h2>
-            <div class="header-actions">
-                <i class='bx bx-search'></i>
-                <i class='bx bx-bell'></i>
-                <i class='bx bx-user-circle'></i>
-            </div>
+    <div class="header">
+        <button class="toggle-btn">
+            <i class='bx bx-menu'></i>
+        </button>
+        <h2 class="header-title">Tasks for <?php echo htmlspecialchars($event['event_name'] ?? 'Event'); ?></h2>
+        <div class="header-actions">
+            <i class='bx bx-search'></i>
+            <i class='bx bx-bell'></i>
+            <i class='bx bx-user-circle'></i>
+        </div>
+    </div>
+
+    <div class="tasks-container">
+        <div class="tasks-header">
+            <h2>Event Tasks</h2>
+            <?php if ($hasPermission): ?>
+            <a href="minutes.php<?= $base_url ?>" class="add-task-btn">
+                <i class='bx bx-plus'></i> Add New Task
+            </a>
+            <?php endif; ?>
         </div>
 
-        <div class="tasks-container">
-            <div class="tasks-header">
-                <h2>Event Tasks</h2>
-                <?php if ($hasPermission): ?>
-                <a href="./minutes.php" class="add-task-btn">
-                    <i class='bx bx-plus'></i> Add New Task
-                </a>
-                <?php endif; ?>
-            </div>
-
-            <table>
-                <thead>
-                    <tr>
-                        <th>Task ID</th>
-                        <th>Description</th>
-                        <th>Assigned To</th>
-                        <th>Due Date</th>
-                        <th>Status</th>
-                        <th>Created At</th>
-                        <?php if ($hasPermission): ?>
-                        <th>Actions</th>
-                        <?php endif; ?>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php if (!empty($tasks)): ?>
-                        <?php foreach ($tasks as $task): ?>
-                            <tr>
-                                <td><?php echo htmlspecialchars($task['task_id']); ?></td>
-                                <td><?php echo htmlspecialchars($task['description']); ?></td>
-                                <td><?php echo htmlspecialchars($task['assigned_to']); ?></td>
-                                <td><?php echo date('M d, Y', strtotime($task['due_date'])); ?></td>
-                                <td>
-                                    <span class="task-status status-<?php echo strtolower($task['status']); ?>">
-                                        <?php echo htmlspecialchars($task['status']); ?>
-                                    </span>
-                                </td>
-                                <td><?php echo date('M d, Y H:i:s', strtotime($task['created_at'])); ?></td>
-                                <?php if ($hasPermission): ?>
-                                <td class="task-actions">
-                                    <button class="task-action-btn" onclick="editTask(<?php echo $task['task_id']; ?>)">
-                                        <i class='bx bx-edit'></i> Edit
-                                    </button>
-                                    <button class="task-action-btn" onclick="deleteTask(<?php echo $task['task_id']; ?>)">
-                                        <i class='bx bx-trash'></i> Delete
-                                    </button>
-                                </td>
-                                <?php endif; ?>
-                            </tr>
-                        <?php endforeach; ?>
-                    <?php else: ?>
-                        <tr>
-                            <td colspan="<?php echo $hasPermission ? 7 : 6; ?>" style="text-align: center;">No tasks found for this event.</td>
-                        </tr>
+        <table>
+            <thead>
+                <tr>
+                    <th>Task ID</th>
+                    <th>Description</th>
+                    <th>Assigned To</th>
+                    <th>Due Date</th>
+                    <th>Status</th>
+                    <th>Created At</th>
+                    <?php if ($hasPermission): ?>
+                    <th>Actions</th>
                     <?php endif; ?>
-                </tbody>
-            </table>
-        </div>
+                </tr>
+            </thead>
+            <tbody>
+                <?php if (!empty($tasks)): ?>
+                    <?php foreach ($tasks as $task): ?>
+                        <tr>
+                            <td><?php echo htmlspecialchars($task['task_id']); ?></td>
+                            <td><?php echo htmlspecialchars($task['description']); ?></td>
+                            <td><?php echo htmlspecialchars($task['assigned_username']); ?></td>
+                            <td><?php echo date('M d, Y', strtotime($task['due_date'])); ?></td>
+                            <td>
+                                <span class="task-status status-<?php echo strtolower($task['status']); ?>">
+                                    <?php echo htmlspecialchars($task['status']); ?>
+                                </span>
+                            </td>
+                            <td><?php echo date('M d, Y H:i:s', strtotime($task['created_at'])); ?></td>
+                            <?php if ($hasPermission): ?>
+                            <td class="task-actions">
+                                <button class="task-action-btn" onclick="editTask(<?php echo $task['task_id']; ?>)">
+                                    <i class='bx bx-edit'></i> Edit
+                                </button>
+                                <button class="task-action-btn" onclick="deleteTask(<?php echo $task['task_id']; ?>)">
+                                    <i class='bx bx-trash'></i> Delete
+                                </button>
+                            </td>
+                            <?php endif; ?>
+                        </tr>
+                    <?php endforeach; ?>
+                <?php else: ?>
+                    <tr>
+                        <td colspan="<?php echo $hasPermission ? 7 : 6; ?>" style="text-align: center;">No tasks found for this event.</td>
+                    </tr>
+                <?php endif; ?>
+            </tbody>
+        </table>
     </div>
+</div>
 
-    <!-- Edit Modal -->
-    <div id="editModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;">
-        <div style="position: relative; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #081b29; padding: 20px; border-radius: 10px; border: 2px solid #0ef; width: 90%; max-width: 500px;">
-            <h2 style="color: #fff; margin-bottom: 20px;">Edit Task</h2>
-            <form id="editTaskForm">
-                <input type="hidden" id="edit_task_id" name="task_id">
-                <input type="hidden" name="action" value="edit">
-                <div style="margin-bottom: 15px;">
-                    <label style="color: #fff; display: block; margin-bottom: 5px;">Description:</label>
-                    <textarea id="edit_description" name="description" style="width: 100%; padding: 8px; border-radius: 5px; background: rgba(255,255,255,0.1); color: #fff; border: 1px solid #0ef;"></textarea>
-                </div>
-                <div style="margin-bottom: 15px;">
-                    <label style="color: #fff; display: block; margin-bottom: 5px;">Due Date:</label>
-                    <input type="date" id="edit_due_date" name="due_date" style="width: 100%; padding: 8px; border-radius: 5px; background: rgba(255,255,255,0.1); color: #fff; border: 1px solid #0ef;">
-                </div>
-                <div style="margin-bottom: 15px;">
-                    <label style="color: #fff; display: block; margin-bottom: 5px;">Status:</label>
-                    <select id="edit_status" name="status" style="width: 100%; padding: 8px; border-radius: 5px; background: rgba(255,255,255,0.1); color: #fff; border: 1px solid #0ef;">
-                        <option value="pending">Pending</option>
-                        <option value="completed">Completed</option>
-                    </select>
-                </div>
-                <div style="display: flex; justify-content: flex-end; gap: 10px;">
-                    <button type="button" onclick="closeEditModal()" style="padding: 8px 15px; border-radius: 5px; border: 1px solid #0ef; background: transparent; color: #0ef; cursor: pointer;">Cancel</button>
-                    <button type="submit" style="padding: 8px 15px; border-radius: 5px; border: none; background: #0ef; color: #081b29; cursor: pointer;">Save Changes</button>
-                </div>
-            </form>
-        </div>
+<!-- Edit Modal -->
+<div id="editModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;">
+    <div style="position: relative; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #081b29; padding: 20px; border-radius: 10px; border: 2px solid #0ef; width: 90%; max-width: 500px;">
+        <h2 style="color: #fff; margin-bottom: 20px;">Edit Task</h2>
+        <form id="editTaskForm">
+            <input type="hidden" id="edit_task_id" name="task_id">
+            <input type="hidden" name="action" value="edit">
+            <div style="margin-bottom: 15px;">
+                <label style="color: #fff; display: block; margin-bottom: 5px;">Description:</label>
+                <textarea id="edit_description" name="description" style="width: 100%; padding: 8px; border-radius: 5px; background: rgba(255,255,255,0.1); color: #fff; border: 1px solid #0ef;"></textarea>
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label style="color: #fff; display: block; margin-bottom: 5px;">Due Date:</label>
+                <input type="date" id="edit_due_date" name="due_date" style="width: 100%; padding: 8px; border-radius: 5px; background: rgba(255,255,255,0.1); color: #fff; border: 1px solid #0ef;">
+            </div>
+            <div style="margin-bottom: 15px;">
+                <label style="color: #fff; display: block; margin-bottom: 5px;">Status:</label>
+                <select id="edit_status" name="status" style="width: 100%; padding: 8px; border-radius: 5px; background: rgba(255,255,255,0.1); color: #fff; border: 1px solid #0ef;">
+                    <option value="pending">Pending</option>
+                    <option value="completed">Completed</option>
+                    <option value="in progress">In Progress</option>
+                </select>
+            </div>
+            <div style="display: flex; justify-content: flex-end; gap: 10px;">
+                <button type="button" onclick="closeEditModal()" style="padding: 8px 15px; border-radius: 5px; border: 1px solid #0ef; background: transparent; color: #0ef; cursor: pointer;">Cancel</button>
+                <button type="submit" style="padding: 8px 15px; border-radius: 5px; border: none; background: #0ef; color: #081b29; cursor: pointer;">Save Changes</button>
+            </div>
+        </form>
     </div>
+</div>
 
     <script>
         function editTask(taskId) {
