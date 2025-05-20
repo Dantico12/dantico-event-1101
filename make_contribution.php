@@ -1,112 +1,4 @@
 <?php
-session_start();
-require_once 'db.php';
-
-// Function to generate base URL with event context
-function getEventContextURL() {
-    $base_url = '';
-    if (isset($_SESSION['current_event_id']) && isset($_SESSION['current_event_code'])) {
-        $base_url = '?event_id=' . urlencode($_SESSION['current_event_id']) .
-        '&event_code=' . urlencode($_SESSION['current_event_code']);
-    }
-    return $base_url;
-}
-
-$base_url = getEventContextURL();
-$current_event_id = $_SESSION['current_event_id'] ?? null;
-
-// Function to fetch user roles
-function getUserRoles($conn, $user_id, $event_id) {
-    $sql = "SELECT em.role, em.committee_role, e.* 
-            FROM event_members em
-            JOIN events e ON em.event_id = e.id 
-            WHERE em.user_id = ? AND em.event_id = ? AND em.status = 'active'";
-    
-    $stmt = $conn->prepare($sql);
-    $stmt->bind_param("ii", $user_id, $event_id);
-    $stmt->execute();
-    return $stmt->get_result()->fetch_assoc();
-}
-
-// Function to check user's role access
-function hasAccess($required_roles, $user_role, $committee_role) {
-    if ($user_role === 'admin' || $user_role === 'organizer') {
-        return true;
-    }
-    $required_roles = array_map('strtolower', $required_roles);
-    if ($user_role === 'member' && !empty($committee_role)) {
-        $committee_role = strtolower($committee_role);
-        return in_array($committee_role, $required_roles);
-    }
-    if ($user_role === 'member' && empty($committee_role)) {
-        return in_array('member', $required_roles);
-    }
-    return false;
-}
-
-// Initialize user roles
-$user_role = '';
-$committee_role = '';
-if (isset($_SESSION['user_id']) && isset($_SESSION['current_event_id'])) {
-    $user_roles = getUserRoles($conn, $_SESSION['user_id'], $_SESSION['current_event_id']);
-    $user_role = $user_roles['role'] ?? '';
-    $committee_role = $user_roles['committee_role'] ?? '';
-}
-
-function getCurrentMeetingInfo($conn, $current_event_id) {
-    if (!$current_event_id) {
-        return [
-            'has_meeting' => false,
-            'message' => 'No event selected'
-        ];
-    }
-    date_default_timezone_set('Africa/Nairobi');
-    $current_time = date('Y-m-d H:i:s');
-    // Get all upcoming meetings for this event
-    $query = "SELECT
-        meeting_id,
-        meeting_type,
-        meeting_date,
-        meeting_time,
-        end_time,
-        CONCAT(meeting_date, ' ', meeting_time) as start_datetime,
-        CONCAT(meeting_date, ' ', end_time) as end_datetime
-        FROM meetings
-        WHERE event_id = ?
-        AND CONCAT(meeting_date, ' ', end_time) >= ?
-        ORDER BY CONCAT(meeting_date, ' ', meeting_time) ASC";
-    $stmt = $conn->prepare($query);
-    $stmt->bind_param('ss', $current_event_id, $current_time);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $meetings = [];
-    while ($row = $result->fetch_assoc()) {
-        $meetings[] = $row;
-    }
-    if (empty($meetings)) {
-        return [
-            'has_meeting' => false,
-            'message' => 'No upcoming meetings scheduled',
-            'meetings' => []
-        ];
-    }
-    return [
-        'has_meeting' => true,
-        'meetings' => $meetings,
-        'current_time' => $current_time
-    ];
-}
-
-// Handle AJAX request
-if(isset($_GET['check_status'])) {
-    header('Content-Type: application/json');
-    echo json_encode(getCurrentMeetingInfo($conn, $current_event_id));
-    exit;
-}
-
-// Initial meeting info for page load
-$initial_meeting_info = getCurrentMeetingInfo($conn, $current_event_id);
-
 class MpesaGateway {
     private $consumer_key;
     private $consumer_secret;
@@ -220,7 +112,6 @@ class MpesaGateway {
         ];
         error_log("M-Pesa Payment Request: " . json_encode($logData));
     }
-    
     private function insertTransaction($orderRef, $phone, $amount, $event_id, $user_id, $mpesaResponse) {
         $status = 'pending';
         $stmt = $this->conn->prepare("INSERT INTO contributions (
@@ -273,7 +164,6 @@ class MpesaGateway {
         return $stmt->execute();
     }
 }
-
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -635,13 +525,32 @@ class MpesaGateway {
     </style>
 </head>
 <body>
-<nav class="sidebar" <?= !hasAccess(['Treasurer', 'Secretary', 'Chairman', 'Admin', 'member'], $user_role, $committee_role) ? 'style="display: none;"' : '' ?>>
+<?php
+// Ensure this PHP block is at the top of your sidebar include or in a separate navigation.php file
+session_start();
+
+// Function to generate base URL with event context
+function getEventContextURL() {
+    $base_url = '';
+    if (isset($_SESSION['current_event_id']) && isset($_SESSION['current_event_code'])) {
+        $base_url = '?event_id=' . urlencode($_SESSION['current_event_id']) . 
+                    '&event_code=' . urlencode($_SESSION['current_event_code']);
+    }
+    return $base_url;
+}
+
+// Get the event context URL to be used across navigation
+$base_url = getEventContextURL();
+?>
+
+<!-- Sidebar Navigation -->
+<nav class="sidebar">
     <div class="sidebar-header">
         <i class='bx bx-calendar-event' style="color: #0ef; font-size: 24px;"></i>
         <h2>Dantico Events</h2>
     </div>
     <div class="sidebar-menu">
-        <!-- Dashboard (accessible to all) -->
+        <!-- Dashboard -->
         <div class="menu-category">
             <div class="menu-item active">
                 <a href="./dashboard.php<?= $base_url ?>">
@@ -651,8 +560,7 @@ class MpesaGateway {
             </div>
         </div>
 
-        <!-- Paybill Section (Visible only to Treasurer and Admin) -->
-        <?php if (hasAccess(['Treasurer', 'Admin'], $user_role, $committee_role)): ?>
+        <!-- Committees Section -->
         <div class="menu-category">
             <div class="category-title">Paybill</div>
             <div class="menu-item">
@@ -661,11 +569,6 @@ class MpesaGateway {
                     <span>Add Paybill</span>
                 </a>
             </div>
-        </div>
-        <?php endif; ?>
-
-        <!-- Committees Section -->
-        <div class="menu-category">
             <div class="menu-item">
                 <a href="./committee-list.php<?= $base_url ?>">
                     <i class='bx bx-group'></i>
@@ -674,20 +577,7 @@ class MpesaGateway {
             </div>
         </div>
 
-        <!-- Minutes Section (Visible only to Secretary) -->
-        <?php if (hasAccess(['Secretary'], $user_role, $committee_role)): ?>
-        <div class="menu-category">
-            <div class="category-title">Reviews</div>
-            <div class="menu-item">
-                <a href="./minutes.php<?= $base_url ?>">
-                    <i class='bx bxs-timer'></i>
-                    <span>Minutes</span>
-                </a>
-            </div>
-        </div>
-        <?php endif; ?>
-
-        <!-- Communication Section (accessible to all) -->
+        <!-- Communication Section -->
         <div class="menu-category">
             <div class="category-title">Communication</div>
             <div class="menu-item">
@@ -705,7 +595,7 @@ class MpesaGateway {
             </div>
         </div>
 
-        <!-- Contributions Section (accessible to all) -->
+        <!-- Contributions Section -->
         <div class="menu-category">
             <div class="category-title">Contributions</div>
             <div class="menu-item">
@@ -722,18 +612,30 @@ class MpesaGateway {
             </div>
         </div>
 
-        <!-- Tasks Section (accessible to all) -->
+        <!-- Reviews Section -->
         <div class="menu-category">
-            <div class="category-title">Tasks</div>
+            <div class="category-title">Reviews</div>
+            <div class="menu-item">
+                <a href="./minutes.php<?= $base_url ?>">
+                    <i class='bx bxs-timer'></i>
+                    <span>Minutes</span>
+                </a>
+            </div>
             <div class="menu-item">
                 <a href="./tasks.php<?= $base_url ?>">
                     <i class='bx bx-task'></i>
                     <span>Tasks</span>
                 </a>
             </div>
+            <div class="menu-item">
+                <a href="./reports.php<?= $base_url ?>">
+                    <i class='bx bx-line-chart'></i>
+                    <span>Reports</span>
+                </a>
+            </div>
         </div>
 
-        <!-- Schedule Section (accessible to all) -->
+        <!-- Other Tools -->
         <div class="menu-category">
             <div class="category-title">Tools</div>
             <div class="menu-item">
@@ -742,10 +644,15 @@ class MpesaGateway {
                     <span>Schedule</span>
                 </a>
             </div>
+            <div class="menu-item">
+                <a href="./settings.php<?= $base_url ?>">
+                    <i class='bx bx-cog'></i>
+                    <span>Settings</span>
+                </a>
+            </div>
         </div>
     </div>
 </nav>
-
       <!-- Main Content -->
       <div class="main-content">
         <div class="header">

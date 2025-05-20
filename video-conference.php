@@ -1,55 +1,19 @@
 <?php
 session_start();
 require_once 'db.php';
+
 // Function to generate base URL with event context
 function getEventContextURL() {
     $base_url = '';
     if (isset($_SESSION['current_event_id']) && isset($_SESSION['current_event_code'])) {
-        $base_url = '?event_id=' . urlencode($_SESSION['current_event_id']) .
-        '&event_code=' . urlencode($_SESSION['current_event_code']);
+        $base_url = '?event_id=' . urlencode($_SESSION['current_event_id']) . 
+                    '&event_code=' . urlencode($_SESSION['current_event_code']);
     }
     return $base_url;
 }
+
 $base_url = getEventContextURL();
 $current_event_id = $_SESSION['current_event_id'] ?? null;
-
-// Function to fetch user roles
-function getUserRoles($conn, $user_id, $event_id) {
-    $sql = "SELECT em.role, em.committee_role, e.* 
-            FROM event_members em
-            JOIN events e ON em.event_id = e.id 
-            WHERE em.user_id = ? AND em.event_id = ? AND em.status = 'active'";
-    
-    $stmt = $conn->prepare($sql);
-    $stmt->bind_param("ii", $user_id, $event_id);
-    $stmt->execute();
-    return $stmt->get_result()->fetch_assoc();
-}
-
-// Function to check user's role access
-function hasAccess($required_roles, $user_role, $committee_role) {
-    if ($user_role === 'admin' || $user_role === 'organizer') {
-        return true;
-    }
-    $required_roles = array_map('strtolower', $required_roles);
-    if ($user_role === 'member' && !empty($committee_role)) {
-        $committee_role = strtolower($committee_role);
-        return in_array($committee_role, $required_roles);
-    }
-    if ($user_role === 'member' && empty($committee_role)) {
-        return in_array('member', $required_roles);
-    }
-    return false;
-}
-
-// Initialize user roles
-$user_role = '';
-$committee_role = '';
-if (isset($_SESSION['user_id']) && isset($_SESSION['current_event_id'])) {
-    $user_roles = getUserRoles($conn, $_SESSION['user_id'], $_SESSION['current_event_id']);
-    $user_role = $user_roles['role'] ?? '';
-    $committee_role = $user_roles['committee_role'] ?? '';
-}
 
 function getCurrentMeetingInfo($conn, $current_event_id) {
     if (!$current_event_id) {
@@ -58,10 +22,12 @@ function getCurrentMeetingInfo($conn, $current_event_id) {
             'message' => 'No event selected'
         ];
     }
+
     date_default_timezone_set('Africa/Nairobi');
     $current_time = date('Y-m-d H:i:s');
+
     // Get all upcoming meetings for this event
-    $query = "SELECT
+    $query = "SELECT 
         meeting_id,
         meeting_type,
         meeting_date,
@@ -69,18 +35,21 @@ function getCurrentMeetingInfo($conn, $current_event_id) {
         end_time,
         CONCAT(meeting_date, ' ', meeting_time) as start_datetime,
         CONCAT(meeting_date, ' ', end_time) as end_datetime
-        FROM meetings
-        WHERE event_id = ?
-        AND CONCAT(meeting_date, ' ', end_time) >= ?
-        ORDER BY CONCAT(meeting_date, ' ', meeting_time) ASC";
+    FROM meetings 
+    WHERE event_id = ? 
+    AND CONCAT(meeting_date, ' ', end_time) >= ?
+    ORDER BY CONCAT(meeting_date, ' ', meeting_time) ASC";
+
     $stmt = $conn->prepare($query);
     $stmt->bind_param('ss', $current_event_id, $current_time);
     $stmt->execute();
     $result = $stmt->get_result();
+    
     $meetings = [];
     while ($row = $result->fetch_assoc()) {
         $meetings[] = $row;
     }
+
     if (empty($meetings)) {
         return [
             'has_meeting' => false,
@@ -88,6 +57,7 @@ function getCurrentMeetingInfo($conn, $current_event_id) {
             'meetings' => []
         ];
     }
+
     return [
         'has_meeting' => true,
         'meetings' => $meetings,
@@ -105,6 +75,7 @@ if(isset($_GET['check_status'])) {
 // Initial meeting info for page load
 $initial_meeting_info = getCurrentMeetingInfo($conn, $current_event_id);
 ?>
+
 <!DOCTYPE html>
 <html>
 <head>
@@ -342,117 +313,73 @@ $initial_meeting_info = getCurrentMeetingInfo($conn, $current_event_id);
     </style>
 </head>
 <body>
-      <!-- Sidebar Navigation with Role-Based Access Control -->
-<nav class="sidebar" <?= !hasAccess(['Treasurer', 'Secretary', 'Chairman', 'Admin', 'member'], $user_role, $committee_role) ? 'style="display: none;"' : '' ?>>
-    <div class="sidebar-header">
-        <i class='bx bx-calendar-event' style="color: #0ef; font-size: 24px;"></i>
-        <h2>Dantico Events</h2>
-    </div>
-    <div class="sidebar-menu">
-        <!-- Dashboard (accessible to all) -->
-        <div class="menu-category">
-            <div class="menu-item active">
-                <a href="./dashboard.php<?= $base_url ?>">
-                    <i class='bx bx-home-alt'></i>
-                    <span>Dashboard</span>
-                </a>
-            </div>
+    <nav class="sidebar">
+        <div class="sidebar-header">
+            <i class='bx bx-calendar-event' style="color: #0ef; font-size: 24px;"></i>
+            <h2>Dantico Events</h2>
         </div>
+        <div class="sidebar-menu">
+            <div class="menu-category">
+                <div class="menu-item">
+                    <a href="./dashboard.php<?= $base_url ?>">
+                        <i class='bx bx-home-alt'></i>
+                        <span>Dashboard</span>
+                    </a>
+                </div>
+            </div>
 
-        <!-- Paybill Section (Visible only to Treasurer and Admin) -->
-        <?php if (hasAccess(['Treasurer', 'Admin'], $user_role, $committee_role)): ?>
-        <div class="menu-category">
-            <div class="category-title">Paybill</div>
-            <div class="menu-item">
-                <a href="./paybill.php<?= $base_url ?>">
-                    <i class='bx bx-plus-circle'></i>
-                    <span>Add Paybill</span>
-                </a>
+            <div class="menu-category">
+                <div class="menu-item">
+                    <a href="./committee-list.php<?= $base_url ?>">
+                        <i class='bx bx-group'></i>
+                        <span>Committee List</span>
+                    </a>
+                </div>
             </div>
-        </div>
-        <?php endif; ?>
 
-        <!-- Committees Section -->
-        <div class="menu-category">
-            <div class="menu-item">
-                <a href="./committee-list.php<?= $base_url ?>">
-                    <i class='bx bx-group'></i>
-                    <span>Committee List</span>
-                </a>
+            <div class="menu-category">
+                <div class="category-title">Communication</div>
+                <div class="menu-item">
+                    <a href="./chat.php<?= $base_url ?>">
+                        <i class='bx bx-message-rounded-dots'></i>
+                        <span>Chat System</span>
+                    </a>
+                </div>
+                <div class="menu-item active">
+                    <a href="./video-conference.php<?= $base_url ?>">
+                        <i class='bx bx-video'></i>
+                        <span>Video Conference</span>
+                    </a>
+                </div>
             </div>
-        </div>
 
-        <!-- Minutes Section (Visible only to Secretary) -->
-        <?php if (hasAccess(['Secretary'], $user_role, $committee_role)): ?>
-        <div class="menu-category">
-            <div class="category-title">Reviews</div>
-            <div class="menu-item">
-                <a href="./minutes.php<?= $base_url ?>">
-                    <i class='bx bxs-timer'></i>
-                    <span>Minutes</span>
-                </a>
+            <div class="menu-category">
+                <div class="category-title">Contributions</div>
+                <div class="menu-item">
+                    <a href="./make_contribution.php<?= $base_url ?>">
+                        <i class='bx bx-plus-circle'></i>
+                        <span>Make Contributions</span>
+                    </a>
+                </div>
+                <div class="menu-item">
+                    <a href="./contributions.php<?= $base_url ?>">
+                        <i class='bx bx-money'></i>
+                        <span>Contributions</span>
+                    </a>
+                </div>
             </div>
-        </div>
-        <?php endif; ?>
 
-        <!-- Communication Section (accessible to all) -->
-        <div class="menu-category">
-            <div class="category-title">Communication</div>
-            <div class="menu-item">
-                <a href="./chat.php<?= $base_url ?>">
-                    <i class='bx bx-message-rounded-dots'></i>
-                    <span>Chat System</span>
-                    <div class="notification-badge">3</div>
-                </a>
-            </div>
-            <div class="menu-item">
-                <a href="./video-conference.php<?= $base_url ?>">
-                    <i class='bx bx-video'></i>
-                    <span>Video Conference</span>
-                </a>
+            <div class="menu-category">
+                <div class="category-title">Tools</div>
+                <div class="menu-item">
+                    <a href="./schedule.php<?= $base_url ?>">
+                        <i class='bx bx-calendar'></i>
+                        <span>Schedule</span>
+                    </a>
+                </div>
             </div>
         </div>
-
-        <!-- Contributions Section (accessible to all) -->
-        <div class="menu-category">
-            <div class="category-title">Contributions</div>
-            <div class="menu-item">
-                <a href="./make_contribution.php<?= $base_url ?>">
-                    <i class='bx bx-plus-circle'></i>
-                    <span>Make Contributions</span>
-                </a>
-            </div>
-            <div class="menu-item">
-                <a href="./contributions.php<?= $base_url ?>">
-                    <i class='bx bx-money'></i>
-                    <span>Contributions</span>
-                </a>
-            </div>
-        </div>
-
-        <!-- Tasks Section (accessible to all) -->
-        <div class="menu-category">
-            <div class="category-title">Tasks</div>
-            <div class="menu-item">
-                <a href="./tasks.php<?= $base_url ?>">
-                    <i class='bx bx-task'></i>
-                    <span>Tasks</span>
-                </a>
-            </div>
-        </div>
-
-        <!-- Schedule Section (accessible to all) -->
-        <div class="menu-category">
-            <div class="category-title">Tools</div>
-            <div class="menu-item">
-                <a href="./schedule.php<?= $base_url ?>">
-                    <i class='bx bx-calendar'></i>
-                    <span>Schedule</span>
-                </a>
-            </div>
-        </div>
-    </div>
-</nav>
+    </nav>
 
     <main class="main-content">
         <div class="video-container">
@@ -511,7 +438,7 @@ $initial_meeting_info = getCurrentMeetingInfo($conn, $current_event_id);
     // Initialize Agora configuration
     const AGORA_CONFIG = {
         APP_ID: "85fd346d881b42b39d7a3fd84c178ea4",
-        TOKEN: "007eJxTYKhvrJbSnrTSz+zaFRataX+WPrkdJq1we805nznr1xZ3f3iuwGBhmpZibGKWYmFhmGRilGRsmWKeaJyWYmGSbGhukZpo8nE+Q0ZDICPDvuvWjIwMEAji8zK4JOaVZCbn66aWpeaVMDAAAAoqJO0=",
+        TOKEN: "007eJxTYAgRn2vGGrXY61vLfk+TV4oFLux9vdc4F+6rtDTrSFlS/lCBwcI0LcXYxCzFwsIwycQoydgyxTzROC3FwiTZ0NwiNdGkWUcnoyGQkeFpxxVWRgYIBPF5GVwS80oyk/N1U8tS80oYGADpdiGQ",
         CHANNEL: "Dantico-event"
     };
 

@@ -13,90 +13,92 @@ $event_id = isset($_GET['event_id']) ? (int)$_GET['event_id'] : 0;
 
 // Verify user is admin of this event
 $is_admin = false;
-$stmt = $conn->prepare("SELECT role FROM event_members WHERE event_id = ? AND user_id = ? AND role = 'admin'");
-$stmt->bind_param("ii", $event_id, $_SESSION['user_id']);
-$stmt->execute();
-$res = $stmt->get_result();
-$is_admin = ($res->num_rows > 0);
-$stmt->close();
+if ($stmt = $conn->prepare("SELECT role FROM event_members WHERE event_id = ? AND user_id = ? AND role = 'admin'")) {
+    $stmt->bind_param("ii", $event_id, $_SESSION['user_id']);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $is_admin = $result->num_rows > 0;
+    $stmt->close();
+}
 
 if (!$is_admin) {
     header("Location: dashboard.php");
     exit();
 }
 
-// Fetch event summary with member counts
-$event_query = <<<SQL
-SELECT e.*, 
-       COUNT(DISTINCT em.user_id) AS total_members,
-       SUM(em.committee_role IS NOT NULL) AS committee_members
-FROM events e
-LEFT JOIN event_members em ON em.event_id = e.id
-WHERE e.id = ?
-GROUP BY e.id;
-SQL;
-$stmt = $conn->prepare($event_query);
-$stmt->bind_param('i', $event_id);
-$stmt->execute();
-$event = $stmt->get_result()->fetch_assoc();
-$stmt->close();
+// Updated query without created_by reference
+$event_query = "
+    SELECT 
+        e.*,
+        COUNT(DISTINCT em.user_id) as total_members,
+        SUM(CASE WHEN em.committee_role IS NOT NULL THEN 1 ELSE 0 END) as committee_members
+    FROM events e
+    LEFT JOIN event_members em ON e.id = em.event_id
+    WHERE e.id = ?
+    GROUP BY e.id
+";
 
-// Handle End Event (cascade delete)
-$error = '';
+if ($stmt = $conn->prepare($event_query)) {
+    $stmt->bind_param("i", $event_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $event = $result->fetch_assoc();
+    $stmt->close();
+}
+
+
+// Add this code to manage_event.php where the end event action is handled
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['end_event'])) {
+    // Start transaction
     $conn->begin_transaction();
+    
     try {
-        // 1) Delete messages for this event
+        // Delete all event messages
         $stmt = $conn->prepare("DELETE FROM messages WHERE event_id = ?");
-        $stmt->bind_param('i', $event_id);
+        $stmt->bind_param("i", $event_id);
         $stmt->execute();
         $stmt->close();
-
-        // 2) Delete tasks directly linked by event_id
+        
+        // Delete all event tasks
         $stmt = $conn->prepare("DELETE FROM tasks WHERE event_id = ?");
-        $stmt->bind_param('i', $event_id);
+        $stmt->bind_param("i", $event_id);
         $stmt->execute();
         $stmt->close();
-
-        // 3) Delete tasks linked by meeting_id for this event
-        $stmt = $conn->prepare(
-            "DELETE t FROM tasks t
-             JOIN meetings m ON t.meeting_id = m.meeting_id
-             WHERE m.event_id = ?"
-        );
-        $stmt->bind_param('i', $event_id);
-        $stmt->execute();
-        $stmt->close();
-
-        // 4) Delete meetings
+        
+        // Delete all event meetings
         $stmt = $conn->prepare("DELETE FROM meetings WHERE event_id = ?");
-        $stmt->bind_param('i', $event_id);
+        $stmt->bind_param("i", $event_id);
         $stmt->execute();
         $stmt->close();
-
-        // 5) Delete event_members
+        
+        // Delete all event members
         $stmt = $conn->prepare("DELETE FROM event_members WHERE event_id = ?");
-        $stmt->bind_param('i', $event_id);
+        $stmt->bind_param("i", $event_id);
         $stmt->execute();
         $stmt->close();
-
-        // 6) Delete the event itself
+        
+        // Finally, delete the event itself
         $stmt = $conn->prepare("DELETE FROM events WHERE id = ?");
-        $stmt->bind_param('i', $event_id);
+        $stmt->bind_param("i", $event_id);
         $stmt->execute();
         $stmt->close();
-
+        
+        // If all operations successful, commit transaction
         $conn->commit();
-        $_SESSION['success_message'] = "Event and all associated data deleted successfully.";
+        
+        $_SESSION['success_message'] = "Event has been ended and all associated data has been deleted successfully.";
         header("Location: join_event.php");
         exit();
+        
     } catch (Exception $e) {
+        // If any operation fails, roll back all changes
         $conn->rollback();
         $error = "Error ending the event: " . $e->getMessage();
     }
 }
 
-// Determine current page for sidebar highlighting
+// Get current page for navigation highlighting
 $current_page = basename($_SERVER['PHP_SELF']);
 ?>
 

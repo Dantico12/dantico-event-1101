@@ -90,44 +90,6 @@ function getCommitteeMembers($conn, $event_id) {
     return [];
 }
 
-// Function to fetch user roles
-function getUserRoles($conn, $user_id, $event_id) {
-    $sql = "SELECT em.role, em.committee_role, e.* 
-            FROM event_members em
-            JOIN events e ON em.event_id = e.id 
-            WHERE em.user_id = ? AND em.event_id = ? AND em.status = 'active'";
-    
-    $stmt = $conn->prepare($sql);
-    $stmt->bind_param("ii", $user_id, $event_id);
-    $stmt->execute();
-    return $stmt->get_result()->fetch_assoc();
-}
-
-// Function to check user's role access
-function hasAccess($required_roles, $user_role, $committee_role) {
-    if ($user_role === 'admin' || $user_role === 'organizer') {
-        return true;
-    }
-    $required_roles = array_map('strtolower', $required_roles);
-    if ($user_role === 'member' && !empty($committee_role)) {
-        $committee_role = strtolower($committee_role);
-        return in_array($committee_role, $required_roles);
-    }
-    if ($user_role === 'member' && empty($committee_role)) {
-        return in_array('member', $required_roles);
-    }
-    return false;
-}
-
-// Initialize user roles
-$user_role = '';
-$committee_role = '';
-if (isset($_SESSION['user_id']) && isset($_SESSION['current_event_id'])) {
-    $user_roles = getUserRoles($conn, $_SESSION['user_id'], $_SESSION['current_event_id']);
-    $user_role = $user_roles['role'] ?? '';
-    $committee_role = $user_roles['committee_role'] ?? '';
-}
-
 // Get data for the page
 $event = getEventDetails($conn, $event_id);
 $committee_members = getCommitteeMembers($conn, $event_id);
@@ -138,8 +100,8 @@ if (!$event) {
 }
 
 // Close database connection if needed
-$conn->close();
-?>
+ $conn->close();
+ ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -470,13 +432,15 @@ $conn->close();
         }
     </style>
 </head>
-<nav class="sidebar" <?= !hasAccess(['Treasurer', 'Secretary', 'Chairman', 'Admin', 'member'], $user_role, $committee_role) ? 'style="display: none;"' : '' ?>>
+<body>
+   <!-- Sidebar Navigation -->
+<nav class="sidebar">
     <div class="sidebar-header">
         <i class='bx bx-calendar-event' style="color: #0ef; font-size: 24px;"></i>
         <h2>Dantico Events</h2>
     </div>
     <div class="sidebar-menu">
-        <!-- Dashboard (accessible to all) -->
+        <!-- Dashboard -->
         <div class="menu-category">
             <div class="menu-item active">
                 <a href="./dashboard.php<?= $base_url ?>">
@@ -486,21 +450,9 @@ $conn->close();
             </div>
         </div>
 
-        <!-- Paybill Section (Visible only to Treasurer and Admin) -->
-        <?php if (hasAccess(['Treasurer', 'Admin'], $user_role, $committee_role)): ?>
-        <div class="menu-category">
-            <div class="category-title">Paybill</div>
-            <div class="menu-item">
-                <a href="./paybill.php<?= $base_url ?>">
-                    <i class='bx bx-plus-circle'></i>
-                    <span>Add Paybill</span>
-                </a>
-            </div>
-        </div>
-        <?php endif; ?>
-
         <!-- Committees Section -->
         <div class="menu-category">
+          
             <div class="menu-item">
                 <a href="./committee-list.php<?= $base_url ?>">
                     <i class='bx bx-group'></i>
@@ -509,20 +461,7 @@ $conn->close();
             </div>
         </div>
 
-        <!-- Minutes Section (Visible only to Secretary) -->
-        <?php if (hasAccess(['Secretary'], $user_role, $committee_role)): ?>
-        <div class="menu-category">
-            <div class="category-title">Reviews</div>
-            <div class="menu-item">
-                <a href="./minutes.php<?= $base_url ?>">
-                    <i class='bx bxs-timer'></i>
-                    <span>Minutes</span>
-                </a>
-            </div>
-        </div>
-        <?php endif; ?>
-
-        <!-- Communication Section (accessible to all) -->
+        <!-- Communication Section -->
         <div class="menu-category">
             <div class="category-title">Communication</div>
             <div class="menu-item">
@@ -540,7 +479,7 @@ $conn->close();
             </div>
         </div>
 
-        <!-- Contributions Section (accessible to all) -->
+        <!-- Contributions Section -->
         <div class="menu-category">
             <div class="category-title">Contributions</div>
             <div class="menu-item">
@@ -557,18 +496,19 @@ $conn->close();
             </div>
         </div>
 
-        <!-- Tasks Section (accessible to all) -->
+        <!-- Reviews Section -->
         <div class="menu-category">
-            <div class="category-title">Tasks</div>
+           
             <div class="menu-item">
                 <a href="./tasks.php<?= $base_url ?>">
                     <i class='bx bx-task'></i>
                     <span>Tasks</span>
                 </a>
             </div>
+            
         </div>
 
-        <!-- Schedule Section (accessible to all) -->
+        <!-- Other Tools -->
         <div class="menu-category">
             <div class="category-title">Tools</div>
             <div class="menu-item">
@@ -577,10 +517,12 @@ $conn->close();
                     <span>Schedule</span>
                 </a>
             </div>
+          
         </div>
     </div>
 </nav>
 
+ 
 <div class="main-content">
         <div class="header">
             <button class="toggle-btn">

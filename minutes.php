@@ -1,40 +1,11 @@
 <?php
 session_start();
 require_once "db.php";
-
 // Enable error reporting for debugging
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
-// Function to fetch user roles from database
-function getUserRoles($conn, $user_id, $event_id) {
-    $sql = "SELECT em.role, em.committee_role 
-            FROM event_members em
-            WHERE em.user_id = ? AND em.event_id = ? AND em.status = 'active'";
-    
-    $stmt = $conn->prepare($sql);
-    $stmt->bind_param("ii", $user_id, $event_id);
-    $stmt->execute();
-    return $stmt->get_result()->fetch_assoc();
-}
-
-// Function to check user's role access
-function hasAccess($required_roles, $user_role, $committee_role) {
-    if ($user_role === 'admin' || $user_role === 'organizer') {
-        return true;
-    }
-    $required_roles = array_map('strtolower', $required_roles);
-    if ($user_role === 'member' && !empty($committee_role)) {
-        $committee_role = strtolower($committee_role);
-        return in_array($committee_role, $required_roles);
-    }
-    if ($user_role === 'member' && empty($committee_role)) {
-        return in_array('member', $required_roles);
-    }
-    return false;
-}
-
-// Function to generate base URL with event context
+//Function to generate base URL with event context
 function getEventContextURL() {
     $base_url = '';
     if (isset($_SESSION['current_event_id']) && isset($_SESSION['current_event_code'])) {
@@ -44,127 +15,115 @@ function getEventContextURL() {
     return $base_url;
 }
 
-// Initialize user roles
-$user_role = '';
-$committee_role = '';
-if (isset($_SESSION['user_id']) && isset($_SESSION['current_event_id'])) {
-    $user_roles = getUserRoles($conn, $_SESSION['user_id'], $_SESSION['current_event_id']);
-    $user_role = $user_roles['role'] ?? '';
-    $committee_role = $user_roles['committee_role'] ?? '';
-    
-    // Store in session for later use
-    $_SESSION['user_role'] = $user_role;
-    $_SESSION['committee_role'] = $committee_role;
-} else {
-    // Fallback to session values if they exist
-    $user_role = $_SESSION['user_role'] ?? '';
-    $committee_role = $_SESSION['committee_role'] ?? '';
-}
-
-// Check if user has access to view this page
-$required_roles = ['Admin', 'Organizer', 'Secretary', 'Chairman'];
-if (!hasAccess($required_roles, $user_role, $committee_role)) {
-    header("Location: access-denied.php");
-    exit();
-}
-
 // Get the event context URL to be used across navigation
 $base_url = getEventContextURL();
+
 
 // Initialize messages
 $meeting_msg = '';
 $task_msg = '';
 
-// Handle Meeting Form Submission (only for authorized roles)
-if (isset($_POST['save_meeting']) && hasAccess(['Admin', 'Organizer', 'Secretary'], $user_role, $committee_role)) {
+// Handle Meeting Form Submission
+if (isset($_POST['save_meeting'])) {
     try {
-        // Validate meeting date/time
-        $meeting_datetime = new DateTime($_POST['date'] . ' ' . $_POST['start_time']);
+        // Get the current datetime for 5-minute validation
         $current_datetime = new DateTime();
-        $min_meeting_datetime = (new DateTime())->add(new DateInterval('PT5M')); // 5 minutes from now
+        $current_datetime->add(new DateInterval('PT5M')); // Add 5 minutes to current time
         
-        if ($meeting_datetime < $min_meeting_datetime) {
-            throw new Exception("Meeting must be scheduled at least 5 minutes from now");
-        }
+        // Create datetime from form inputs
+        $meeting_datetime = new DateTime($_POST['date'] . ' ' . $_POST['start_time']);
         
-        // Validate end time is after start time
-        $end_datetime = new DateTime($_POST['date'] . ' ' . $_POST['end_time']);
-        if ($end_datetime <= $meeting_datetime) {
-            throw new Exception("End time must be after start time");
-        }
-
-        // Prepare meeting data
-        $meeting_data = [
-            'event_id' => $_SESSION['current_event_id'],
-            'meeting_type' => $_POST['meeting_type'],
-            'meeting_date' => $_POST['date'],
-            'meeting_time' => $_POST['start_time'],
-            'end_time' => $_POST['end_time'],
-            'status' => ($_POST['save_meeting'] === 'draft') ? 'draft' : 'scheduled',
-            'created_by' => $_SESSION['user_id']
-        ];
-
-        // Insert meeting into the database
-        $stmt = $conn->prepare("INSERT INTO meetings (event_id, meeting_type, meeting_date, meeting_time, end_time, status, created_by) 
-                               VALUES (?, ?, ?, ?, ?, ?, ?)");
-        $stmt->bind_param("isssssi", 
-            $meeting_data['event_id'], 
-            $meeting_data['meeting_type'], 
-            $meeting_data['meeting_date'], 
-            $meeting_data['meeting_time'],
-            $meeting_data['end_time'],
-            $meeting_data['status'], 
-            $meeting_data['created_by']);
-        
-        if ($stmt->execute()) {
-            $meeting_msg = "Meeting saved successfully!";
+        // Check if meeting is at least 5 minutes in the future
+        if ($meeting_datetime < $current_datetime) {
+            $meeting_msg = "Error: Meeting must be scheduled at least 5 minutes from now.";
         } else {
-            $meeting_msg = "Error saving meeting: " . $stmt->error;
+            // Prepare meeting data
+            $meeting_data = [
+                'event_id' => $_SESSION['current_event_id'],
+                'meeting_type' => $_POST['meeting_type'],
+                'meeting_date' => $_POST['date'],
+                'meeting_time' => $_POST['start_time'],
+                'end_time' => $_POST['end_time'],
+                'status' => ($_POST['save_meeting'] === 'draft') ? 'draft' : 'scheduled',
+                'created_by' => $_SESSION['user_id']
+            ];
+
+            // Insert meeting into the database
+            $stmt = $conn->prepare("INSERT INTO meetings (event_id, meeting_type, meeting_date, meeting_time, end_time, status, created_by) 
+                                VALUES (?, ?, ?, ?, ?, ?, ?)");
+            $stmt->bind_param("isssssi", 
+                $meeting_data['event_id'], 
+                $meeting_data['meeting_type'], 
+                $meeting_data['meeting_date'], 
+                $meeting_data['meeting_time'],
+                $meeting_data['end_time'],
+                $meeting_data['status'], 
+                $meeting_data['created_by']);
+            
+            if ($stmt->execute()) {
+                $meeting_msg = "Meeting saved successfully!";
+            } else {
+                $meeting_msg = "Error saving meeting: " . $stmt->error;
+            }
         }
     } catch (Exception $e) {
         $meeting_msg = "Error: " . $e->getMessage();
     }
 }
 
-// Handle Task Form Submission (only for authorized roles)
-if (isset($_POST['add_task']) && hasAccess(['Admin', 'Organizer', 'Secretary', 'Chairman'], $user_role, $committee_role)) {
+// Handle Task Form Submission - MODIFIED to remove meeting_id requirement
+if (isset($_POST['add_task'])) {
     try {
-        // Validate due date is at least 1 day in future
+        // Check if due date is at least 1 day in the future
+        $current_date = new DateTime();
+        $tomorrow = new DateTime('tomorrow');
         $due_date = new DateTime($_POST['due_date']);
-        $min_due_date = (new DateTime())->add(new DateInterval('P1D')); // 1 day from now
         
-        if ($due_date < $min_due_date) {
-            throw new Exception("Due date must be at least 1 day in the future");
-        }
-
-        // Prepare task data (without meeting_id)
-        $task_data = [
-            'event_id' => $_SESSION['current_event_id'],
-            'description' => $_POST['task_description'],
-            'assigned_to' => $_POST['assigned_to'],
-            'due_date' => $_POST['due_date'],
-            'status' => 'pending'
-        ];
-
-        // Insert task into the database (without meeting_id)
-        $stmt = $conn->prepare("INSERT INTO tasks (event_id, description, assigned_to, due_date, status) 
-                               VALUES (?, ?, ?, ?, ?)");
-        $stmt->bind_param("issss", 
-            $task_data['event_id'],
-            $task_data['description'],
-            $task_data['assigned_to'],
-            $task_data['due_date'],
-            $task_data['status']);
-        
-        if ($stmt->execute()) {
-            $task_msg = "Task added successfully!";
+        if ($due_date < $tomorrow) {
+            $task_msg = "Error: Due date must be at least 1 day from today.";
         } else {
-            $task_msg = "Error adding task: " . $stmt->error;
+            // Prepare task data - removed meeting_id
+            $task_data = [
+                'event_id' => $_SESSION['current_event_id'],
+                'description' => $_POST['task_description'],
+                'assigned_to' => $_POST['assigned_to'],
+                'due_date' => $_POST['due_date'],
+                'status' => 'pending'
+            ];
+
+            // Insert task into the database - removed meeting_id from query
+            $stmt = $conn->prepare("INSERT INTO tasks (event_id, description, assigned_to, due_date, status) 
+                                VALUES (?, ?, ?, ?, ?)");
+            $stmt->bind_param("issss", 
+                $task_data['event_id'],
+                $task_data['description'],
+                $task_data['assigned_to'],
+                $task_data['due_date'],
+                $task_data['status']);
+            
+            if ($stmt->execute()) {
+                $task_msg = "Task added successfully!";
+            } else {
+                $task_msg = "Error adding task: " . $stmt->error;
+            }
         }
     } catch (Exception $e) {
         $task_msg = "Error: " . $e->getMessage();
     }
 }
+
+// We still need to fetch meetings for the meetings section, but not for task assignment
+$meetings_query = "SELECT m.meeting_id, m.event_id, m.meeting_type, 
+                          m.meeting_date, m.meeting_time, m.end_time, m.status
+                   FROM meetings m 
+                   WHERE m.event_id = ? 
+                   ORDER BY m.meeting_date ASC, m.meeting_time ASC";
+
+$stmt = $conn->prepare($meetings_query);
+$stmt->bind_param("i", $_SESSION['current_event_id']);
+$stmt->execute();
+$meetings_result = $stmt->get_result();
+$meetings = $meetings_result->fetch_all(MYSQLI_ASSOC);
 
 // Fetch event members for task assignment
 $members_query = "SELECT em.user_id, u.username, em.role, em.committee_role 
@@ -178,6 +137,7 @@ $stmt->bind_param("i", $_SESSION['current_event_id']);
 $stmt->execute();
 $members_result = $stmt->get_result();
 $event_members = $members_result->fetch_all(MYSQLI_ASSOC);
+
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -406,14 +366,14 @@ $event_members = $members_result->fetch_all(MYSQLI_ASSOC);
 </head>
 <body>
         
-
-<nav class="sidebar" <?= !hasAccess(['Treasurer', 'Secretary', 'Chairman', 'Admin', 'member'], $user_role, $committee_role) ? 'style="display: none;"' : '' ?>>
+ <!-- Sidebar Navigation -->
+ <nav class="sidebar">
     <div class="sidebar-header">
         <i class='bx bx-calendar-event' style="color: #0ef; font-size: 24px;"></i>
         <h2>Dantico Events</h2>
     </div>
     <div class="sidebar-menu">
-        <!-- Dashboard (accessible to all) -->
+        <!-- Dashboard -->
         <div class="menu-category">
             <div class="menu-item active">
                 <a href="./dashboard.php<?= $base_url ?>">
@@ -423,21 +383,15 @@ $event_members = $members_result->fetch_all(MYSQLI_ASSOC);
             </div>
         </div>
 
-        <!-- Paybill Section (Visible only to Treasurer and Admin) -->
-        <?php if (hasAccess(['Treasurer', 'Admin'], $user_role, $committee_role)): ?>
+        <!-- Committees Section -->
         <div class="menu-category">
-            <div class="category-title">Paybill</div>
+            <div class="category-title">paybill</div>
             <div class="menu-item">
                 <a href="./paybill.php<?= $base_url ?>">
                     <i class='bx bx-plus-circle'></i>
                     <span>Add Paybill</span>
                 </a>
             </div>
-        </div>
-        <?php endif; ?>
-
-        <!-- Committees Section -->
-        <div class="menu-category">
             <div class="menu-item">
                 <a href="./committee-list.php<?= $base_url ?>">
                     <i class='bx bx-group'></i>
@@ -446,20 +400,7 @@ $event_members = $members_result->fetch_all(MYSQLI_ASSOC);
             </div>
         </div>
 
-        <!-- Minutes Section (Visible only to Secretary) -->
-        <?php if (hasAccess(['Secretary'], $user_role, $committee_role)): ?>
-        <div class="menu-category">
-            <div class="category-title">Reviews</div>
-            <div class="menu-item">
-                <a href="./minutes.php<?= $base_url ?>">
-                    <i class='bx bxs-timer'></i>
-                    <span>Minutes</span>
-                </a>
-            </div>
-        </div>
-        <?php endif; ?>
-
-        <!-- Communication Section (accessible to all) -->
+        <!-- Communication Section -->
         <div class="menu-category">
             <div class="category-title">Communication</div>
             <div class="menu-item">
@@ -477,7 +418,7 @@ $event_members = $members_result->fetch_all(MYSQLI_ASSOC);
             </div>
         </div>
 
-        <!-- Contributions Section (accessible to all) -->
+        <!-- Contributions Section -->
         <div class="menu-category">
             <div class="category-title">Contributions</div>
             <div class="menu-item">
@@ -494,18 +435,25 @@ $event_members = $members_result->fetch_all(MYSQLI_ASSOC);
             </div>
         </div>
 
-        <!-- Tasks Section (accessible to all) -->
+        <!-- Reviews Section -->
         <div class="menu-category">
-            <div class="category-title">Tasks</div>
+            <div class="category-title">Reviews</div>
+            <div class="menu-item">
+                <a href="./minutes.php<?= $base_url ?>">
+                    <i class='bx bxs-timer'></i>
+                    <span>Minutes</span>
+                </a>
+            </div>
             <div class="menu-item">
                 <a href="./tasks.php<?= $base_url ?>">
                     <i class='bx bx-task'></i>
                     <span>Tasks</span>
                 </a>
             </div>
+            
         </div>
 
-        <!-- Schedule Section (accessible to all) -->
+        <!-- Other Tools -->
         <div class="menu-category">
             <div class="category-title">Tools</div>
             <div class="menu-item">
@@ -514,6 +462,7 @@ $event_members = $members_result->fetch_all(MYSQLI_ASSOC);
                     <span>Schedule</span>
                 </a>
             </div>
+          
         </div>
     </div>
 </nav>
@@ -550,7 +499,7 @@ $event_members = $members_result->fetch_all(MYSQLI_ASSOC);
 
                     <div class="form-group">
                         <label>Date</label>
-                        <input type="date" name="date" required>
+                        <input type="date" name="date" min="<?php echo date('Y-m-d'); ?>" required>
                     </div>
 
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
@@ -575,135 +524,57 @@ $event_members = $members_result->fetch_all(MYSQLI_ASSOC);
                 </form>
             </div>
 
-            <!-- Task Form Section -->
-<div class="section">
-    <h2 class="section-title">
-        <i class='bx bx-task'></i>
-        Add New Task
-    </h2>
-    <?php if ($task_msg): ?>
-        <div class="alert"><?php echo htmlspecialchars($task_msg); ?></div>
-    <?php endif; ?>
-    
-    <form id="taskForm" method="POST" action="">
-        <div class="form-group">
-            <label>Task Description</label>
-            <textarea name="task_description" required></textarea>
-        </div>
+            <!-- Task Form Section - MODIFIED to remove meeting selection -->
+            <div class="section">
+                <h2 class="section-title">
+                    <i class='bx bx-task'></i>
+                    Add New Task
+                </h2>
+                <?php if ($task_msg): ?>
+                    <div class="alert"><?php echo htmlspecialchars($task_msg); ?></div>
+                <?php endif; ?>
+                
+                <form id="taskForm" method="POST" action="">
+                    <div class="form-group">
+                        <label>Task Description</label>
+                        <textarea name="task_description" required></textarea>
+                    </div>
 
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-            <div class="form-group">
-                <label>Assigned To</label>
-                <select name="assigned_to" required>
-                    <option value="">Select member...</option>
-                    <?php 
-                    if ($event_members && mysqli_num_rows($members_result) > 0) {
-                        foreach ($event_members as $member) {
-                            $member_text = htmlspecialchars($member['username']);
-                            if ($member['committee_role']) {
-                                $member_text .= ' (' . htmlspecialchars($member['committee_role']) . ')';
-                            } else {
-                                $member_text .= ' (' . htmlspecialchars($member['role']) . ')';
-                            }
-                            echo '<option value="' . htmlspecialchars($member['username']) . '">' . 
-                                 $member_text . '</option>';
-                        }
-                    }
-                    ?>
-                </select>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                        <div class="form-group">
+                            <label>Assigned To</label>
+                            <select name="assigned_to" required>
+                                <option value="">Select member...</option>
+                                <?php 
+                                if ($event_members && mysqli_num_rows($members_result) > 0) {
+                                    foreach ($event_members as $member) {
+                                        $member_text = htmlspecialchars($member['username']);
+                                        if ($member['committee_role']) {
+                                            $member_text .= ' (' . htmlspecialchars($member['committee_role']) . ')';
+                                        } else {
+                                            $member_text .= ' (' . htmlspecialchars($member['role']) . ')';
+                                        }
+                                        echo '<option value="' . htmlspecialchars($member['username']) . '">' . 
+                                             $member_text . '</option>';
+                                    }
+                                }
+                                ?>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Due Date</label>
+                            <input type="date" name="due_date" min="<?php echo date('Y-m-d', strtotime('+1 day')); ?>" required>
+                        </div>
+                    </div>
+
+                    <div style="display: flex; justify-content: flex-end;">
+                        <button type="submit" name="add_task" class="btn btn-primary">
+                            <i class='bx bx-plus'></i> Add Task
+                        </button>
+                    </div>
+                </form>
             </div>
-            <div class="form-group">
-                <label>Due Date</label>
-                <input type="date" name="due_date" required>
-            </div>
-        </div>
-
-        <div style="display: flex; justify-content: flex-end;">
-            <button type="submit" name="add_task" class="btn btn-primary">
-                <i class='bx bx-plus'></i> Add Task
-            </button>
-        </div>
-    </form>
-</div>
-
-           
         </div>
     </div>
-    <script>
-document.addEventListener('DOMContentLoaded', function() {
-    // Meeting form validation
-    const meetingForm = document.getElementById('meetingForm');
-    if (meetingForm) {
-        meetingForm.addEventListener('submit', function(e) {
-            const dateInput = meetingForm.querySelector('input[name="date"]');
-            const startTimeInput = meetingForm.querySelector('input[name="start_time"]');
-            const endTimeInput = meetingForm.querySelector('input[name="end_time"]');
-            
-            // Get current date/time plus 5 minutes
-            const now = new Date();
-            const minDateTime = new Date(now.getTime() + 5 * 60000); // Add 5 minutes
-            
-            // Create meeting datetime object
-            const meetingDateTime = new Date(dateInput.value + 'T' + startTimeInput.value);
-            
-            // Validate meeting is in future
-            if (meetingDateTime < minDateTime) {
-                e.preventDefault();
-                alert('Meeting must be scheduled at least 5 minutes from now');
-                return false;
-            }
-            
-            // Validate end time is after start time
-            const endDateTime = new Date(dateInput.value + 'T' + endTimeInput.value);
-            if (endDateTime <= meetingDateTime) {
-                e.preventDefault();
-                alert('End time must be after start time');
-                return false;
-            }
-        });
-    }
-
-    // Task form validation
-    const taskForm = document.getElementById('taskForm');
-    if (taskForm) {
-        taskForm.addEventListener('submit', function(e) {
-            const dueDateInput = taskForm.querySelector('input[name="due_date"]');
-            
-            // Get current date plus 1 day
-            const now = new Date();
-            const tomorrow = new Date(now);
-            tomorrow.setDate(tomorrow.getDate() + 1);
-            tomorrow.setHours(0, 0, 0, 0); // Start of day
-            
-            // Create due date object
-            const dueDate = new Date(dueDateInput.value);
-            dueDate.setHours(0, 0, 0, 0);
-            
-            // Validate due date is in future
-            if (dueDate < tomorrow) {
-                e.preventDefault();
-                alert('Due date must be at least 1 day in the future');
-                return false;
-            }
-        });
-    }
-
-    // Set minimum values on date/time inputs
-    const today = new Date().toISOString().split('T')[0];
-    document.querySelector('input[name="date"]').min = today;
-    
-    // For meeting time - set minimum time (current time + 5 minutes)
-    const now = new Date();
-    const minTime = new Date(now.getTime() + 5 * 60000); // Add 5 minutes
-    const minTimeString = minTime.toTimeString().substr(0, 5);
-    document.querySelector('input[name="start_time"]').min = minTimeString;
-    
-    // For task due date - set minimum date (tomorrow)
-    const tomorrow = new Date(now);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const tomorrowString = tomorrow.toISOString().split('T')[0];
-    document.querySelector('input[name="due_date"]').min = tomorrowString;
-});
-</script>
 </body>
 </html>

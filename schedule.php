@@ -4,97 +4,21 @@ require_once 'db.php';
 // Timezone setting
 date_default_timezone_set('Africa/Nairobi');
 
-// Function to fetch user roles from database
-function getUserRoles($conn, $user_id, $event_id) {
-    $sql = "SELECT em.role, em.committee_role 
-            FROM event_members em
-            WHERE em.user_id = ? AND em.event_id = ? AND em.status = 'active'";
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'join_meeting') {
+    $meeting_id = $_POST['meeting_id'] ?? '';
     
-    $stmt = $conn->prepare($sql);
-    $stmt->bind_param("ii", $user_id, $event_id);
-    $stmt->execute();
-    return $stmt->get_result()->fetch_assoc();
-}
-
-// Function to check user's role access
-function hasAccess($required_roles, $user_role, $committee_role) {
-    if ($user_role === 'admin' || $user_role === 'chairman') {
-        return true;
-    }
-    $required_roles = array_map('strtolower', $required_roles);
-    if ($user_role === 'member' && !empty($committee_role)) {
-        $committee_role = strtolower($committee_role);
-        return in_array($committee_role, $required_roles);
-    }
-    if ($user_role === 'member' && empty($committee_role)) {
-        return in_array('member', $required_roles);
-    }
-    return false;
-}
-
-// Initialize user roles
-$user_role = '';
-$committee_role = '';
-if (isset($_SESSION['user_id']) && isset($_SESSION['current_event_id'])) {
-    $user_roles = getUserRoles($conn, $_SESSION['user_id'], $_SESSION['current_event_id']);
-    $user_role = $user_roles['role'] ?? '';
-    $committee_role = $user_roles['committee_role'] ?? '';
-    
-    // Store in session for later use
-    $_SESSION['user_role'] = $user_role;
-    $_SESSION['committee_role'] = $committee_role;
-} else {
-    // Fallback to session values if they exist
-    $user_role = $_SESSION['user_role'] ?? '';
-    $committee_role = $_SESSION['committee_role'] ?? '';
-}
-
-// Check if user has access to view this page
-$required_roles = ['Admin', 'Organizer', 'Member', 'Chairman', 'Secretary', 'Treasurer'];
-if (!hasAccess($required_roles, $user_role, $committee_role)) {
-    header("Location: access-denied.php");
-    exit();
-}
-
-// Define permission for meeting management
-$canManageMeetings = hasAccess(['Admin', 'Organizer', 'Secretary'], $user_role, $committee_role);
-
-// Handle meeting join request
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
-    if ($_POST['action'] === 'join_meeting') {
-        $meeting_id = $_POST['meeting_id'] ?? '';
+    if ($meeting_id) {
+        $redirect_url = 'video-conference.php?' . http_build_query([
+            'event_id' => $_SESSION['current_event_id'],
+            'event_code' => $_SESSION['current_event_code'],
+            'meeting_id' => $meeting_id
+        ]);
         
-        if ($meeting_id) {
-            $redirect_url = 'video-conference.php?' . http_build_query([
-                'event_id' => $_SESSION['current_event_id'],
-                'event_code' => $_SESSION['current_event_code'],
-                'meeting_id' => $meeting_id
-            ]);
-            
-            header("Location: " . $redirect_url);
-            exit;
-        }
-    }
-    
-    // Handle meeting management actions if user has permission
-    if ($canManageMeetings) {
-        if ($_POST['action'] === 'delete_meeting') {
-            $meeting_id = $_POST['meeting_id'] ?? '';
-            if ($meeting_id) {
-                $stmt = $conn->prepare("DELETE FROM meetings WHERE id = ? AND event_id = ?");
-                $stmt->bind_param("ii", $meeting_id, $_SESSION['current_event_id']);
-                if ($stmt->execute()) {
-                    $_SESSION['success_message'] = "Meeting deleted successfully";
-                } else {
-                    $_SESSION['error_message'] = "Failed to delete meeting";
-                }
-                header("Location: meetings.php" . getEventContextURL());
-                exit;
-            }
-        }
+        header("Location: " . $redirect_url);
+        exit;
     }
 }
-
 // Validate event session
 if (!isset($_SESSION['current_event_id']) || !isset($_SESSION['current_event_code'])) {
     header("Location: events.php");
@@ -114,7 +38,6 @@ function getEventContextURL($additional_params = []) {
     $params = array_merge($base_params, $additional_params);
     return '?' . http_build_query($params);
 }
-
 // Get event details
 function getEventDetails($conn, $event_id) {
     $stmt = $conn->prepare("SELECT event_name FROM events WHERE id = ?");
@@ -123,12 +46,13 @@ function getEventDetails($conn, $event_id) {
     $result = $stmt->get_result();
     return $result->fetch_assoc();
 }
-
 function getMeetingStatus($meeting_date, $start_time, $end_time) {
     try {
+        // Create DateTime objects with explicit timezone
         $timezone = new DateTimeZone('Africa/Nairobi');
         $current_time = new DateTime('now', $timezone);
         
+        // Create a proper datetime string by combining date and time
         $start_datetime = DateTime::createFromFormat('Y-m-d H:i:s', $meeting_date . ' ' . $start_time, $timezone);
         $end_datetime = DateTime::createFromFormat('Y-m-d H:i:s', $meeting_date . ' ' . $end_time, $timezone);
         
@@ -137,9 +61,21 @@ function getMeetingStatus($meeting_date, $start_time, $end_time) {
             throw new Exception("Invalid datetime format");
         }
 
+        // Convert all times to timestamps for consistent comparison
         $current = $current_time->getTimestamp();
         $start = $start_datetime->getTimestamp();
         $end = $end_datetime->getTimestamp();
+
+        // Debug logging
+        error_log(sprintf(
+            "Current: %s (%d), Start: %s (%d), End: %s (%d)",
+            $current_time->format('Y-m-d H:i:s'),
+            $current,
+            $start_datetime->format('Y-m-d H:i:s'),
+            $start,
+            $end_datetime->format('Y-m-d H:i:s'),
+            $end
+        ));
 
         if ($current < $start) {
             return [
@@ -147,7 +83,9 @@ function getMeetingStatus($meeting_date, $start_time, $end_time) {
                 'class' => 'scheduled-status',
                 'can_join' => false,
                 'formatted_start' => $start_datetime->format('c'),
-                'formatted_end' => $end_datetime->format('c')
+                'formatted_end' => $end_datetime->format('c'),
+                'timestamp_start' => $start,
+                'timestamp_end' => $end
             ];
         } elseif ($current >= $start && $current <= $end) {
             return [
@@ -155,7 +93,9 @@ function getMeetingStatus($meeting_date, $start_time, $end_time) {
                 'class' => 'in-progress-status',
                 'can_join' => true,
                 'formatted_start' => $start_datetime->format('c'),
-                'formatted_end' => $end_datetime->format('c')
+                'formatted_end' => $end_datetime->format('c'),
+                'timestamp_start' => $start,
+                'timestamp_end' => $end
             ];
         } else {
             return [
@@ -163,7 +103,9 @@ function getMeetingStatus($meeting_date, $start_time, $end_time) {
                 'class' => 'ended-status',
                 'can_join' => false,
                 'formatted_start' => $start_datetime->format('c'),
-                'formatted_end' => $end_datetime->format('c')
+                'formatted_end' => $end_datetime->format('c'),
+                'timestamp_start' => $start,
+                'timestamp_end' => $end
             ];
         }
     } catch (Exception $e) {
@@ -173,11 +115,12 @@ function getMeetingStatus($meeting_date, $start_time, $end_time) {
             'class' => 'error-status',
             'can_join' => false,
             'formatted_start' => null,
-            'formatted_end' => null
+            'formatted_end' => null,
+            'timestamp_start' => null,
+            'timestamp_end' => null
         ];
     }
 }
-
 function getMeetings($conn, $event_id) {
     try {
         $stmt = $conn->prepare("
@@ -185,7 +128,9 @@ function getMeetings($conn, $event_id) {
                 m.*,
                 DATE_FORMAT(m.meeting_date, '%Y-%m-%d') as formatted_date,
                 TIME_FORMAT(m.meeting_time, '%H:%i:%s') as formatted_start_time,
-                TIME_FORMAT(m.end_time, '%H:%i:%s') as formatted_end_time
+                TIME_FORMAT(m.end_time, '%H:%i:%s') as formatted_end_time,
+                UNIX_TIMESTAMP(CONCAT(m.meeting_date, ' ', m.meeting_time)) as start_timestamp,
+                UNIX_TIMESTAMP(CONCAT(m.meeting_date, ' ', m.end_time)) as end_timestamp
             FROM meetings m
             WHERE m.event_id = ?
             ORDER BY m.meeting_date DESC, m.meeting_time DESC
@@ -208,6 +153,7 @@ function getMeetings($conn, $event_id) {
         return [];
     }
 }
+
 
 // Initialize variables
 $base_url = getEventContextURL();
@@ -663,13 +609,16 @@ $meetings = getMeetings($conn, $current_event_id);
     </style>
 </head>
 <body>
-<nav class="sidebar" <?= !hasAccess(['Treasurer', 'Secretary', 'Chairman', 'Admin', 'member'], $user_role, $committee_role) ? 'style="display: none;"' : '' ?>>
+
+  
+<!-- Sidebar Navigation -->
+<nav class="sidebar">
     <div class="sidebar-header">
         <i class='bx bx-calendar-event' style="color: #0ef; font-size: 24px;"></i>
         <h2>Dantico Events</h2>
     </div>
     <div class="sidebar-menu">
-        <!-- Dashboard (accessible to all) -->
+        <!-- Dashboard -->
         <div class="menu-category">
             <div class="menu-item active">
                 <a href="./dashboard.php<?= $base_url ?>">
@@ -679,21 +628,9 @@ $meetings = getMeetings($conn, $current_event_id);
             </div>
         </div>
 
-        <!-- Paybill Section (Visible only to Treasurer and Admin) -->
-        <?php if (hasAccess(['Treasurer', 'Admin'], $user_role, $committee_role)): ?>
-        <div class="menu-category">
-            <div class="category-title">Paybill</div>
-            <div class="menu-item">
-                <a href="./paybill.php<?= $base_url ?>">
-                    <i class='bx bx-plus-circle'></i>
-                    <span>Add Paybill</span>
-                </a>
-            </div>
-        </div>
-        <?php endif; ?>
-
         <!-- Committees Section -->
         <div class="menu-category">
+            
             <div class="menu-item">
                 <a href="./committee-list.php<?= $base_url ?>">
                     <i class='bx bx-group'></i>
@@ -702,20 +639,7 @@ $meetings = getMeetings($conn, $current_event_id);
             </div>
         </div>
 
-        <!-- Minutes Section (Visible only to Secretary) -->
-        <?php if (hasAccess(['Secretary'], $user_role, $committee_role)): ?>
-        <div class="menu-category">
-            <div class="category-title">Reviews</div>
-            <div class="menu-item">
-                <a href="./minutes.php<?= $base_url ?>">
-                    <i class='bx bxs-timer'></i>
-                    <span>Minutes</span>
-                </a>
-            </div>
-        </div>
-        <?php endif; ?>
-
-        <!-- Communication Section (accessible to all) -->
+        <!-- Communication Section -->
         <div class="menu-category">
             <div class="category-title">Communication</div>
             <div class="menu-item">
@@ -733,7 +657,7 @@ $meetings = getMeetings($conn, $current_event_id);
             </div>
         </div>
 
-        <!-- Contributions Section (accessible to all) -->
+        <!-- Contributions Section -->
         <div class="menu-category">
             <div class="category-title">Contributions</div>
             <div class="menu-item">
@@ -750,18 +674,19 @@ $meetings = getMeetings($conn, $current_event_id);
             </div>
         </div>
 
-        <!-- Tasks Section (accessible to all) -->
+        <!-- Reviews Section -->
         <div class="menu-category">
-            <div class="category-title">Tasks</div>
+            
             <div class="menu-item">
                 <a href="./tasks.php<?= $base_url ?>">
                     <i class='bx bx-task'></i>
                     <span>Tasks</span>
                 </a>
             </div>
+            
         </div>
 
-        <!-- Schedule Section (accessible to all) -->
+        <!-- Other Tools -->
         <div class="menu-category">
             <div class="category-title">Tools</div>
             <div class="menu-item">
@@ -770,95 +695,110 @@ $meetings = getMeetings($conn, $current_event_id);
                     <span>Schedule</span>
                 </a>
             </div>
+          
         </div>
     </div>
 </nav>
-
 <div class="main-content">
-    <div class="header">
-        <button class="toggle-btn">
-            <i class='bx bx-menu'></i>
+        <div class="header">
+            <button class="toggle-btn">
+                <i class='bx bx-menu'></i>
+            </button>
+            <h2 class="header-title">Scheduled Meetings</h2>
+            <div class="header-actions">
+                <i class='bx bx-search'></i>
+                <i class='bx bx-bell'></i>
+                <i class='bx bx-user-circle'></i>
+            </div>
+        </div>
+
+        <div class="content-section">
+           
+<table class="meetings-table">
+    <thead>
+        <tr>
+            <th>Meeting Type</th>
+            <th>Date</th>
+            <th>Time</th>
+            <th>Status</th>
+            <th>Created At</th>
+            <th>Action</th>
+        </tr>
+    </thead>
+    <tbody>
+        <?php if ($meetings): ?>
+            <?php foreach ($meetings as $meeting): ?>
+                <?php 
+                $meeting_status = getMeetingStatus(
+                    $meeting['formatted_date'],
+                    $meeting['formatted_start_time'],
+                    $meeting['formatted_end_time']
+                );
+                ?>
+               <tr class="meeting-row">
+    <td><?php echo htmlspecialchars(ucfirst($meeting['meeting_type'])); ?></td>
+  <td><?php echo date('M d, Y', strtotime($meeting['formatted_date'])); ?></td>
+<td class="meeting-time">
+    <?php 
+    echo date('h:i A', strtotime($meeting['formatted_start_time'])) . ' - ' . 
+         date('h:i A', strtotime($meeting['formatted_end_time'])); 
+    ?>
+</td>
+    <td>
+        <div class="status-<?php echo $meeting_status['class']; ?>">
+            <span class="status-indicator"></span>
+            <span class="status-text">
+                <?php echo ucfirst($meeting_status['status']); ?>
+            </span>
+        </div>
+    </td>
+    <td><?php echo date('M d, Y h:i A', strtotime($meeting['created_at'])); ?></td>
+    <td class="meeting-action">
+    <?php if ($meeting_status['status'] === 'scheduled'): ?>
+        <button type="button" class="join-btn disabled">
+            Join Meeting
         </button>
-        <h2 class="header-title">Scheduled Meetings</h2>
-        <div class="header-actions">
-            <i class='bx bx-search'></i>
-            <i class='bx bx-bell'></i>
-            <i class='bx bx-user-circle'></i>
+        <span class="countdown"></span>
+    <?php elseif ($meeting_status['status'] === 'in progress'): ?>
+        <form method="POST" style="display: inline;">
+            <input type="hidden" name="meeting_id" value="<?php echo $meeting['id']; ?>">
+            <input type="hidden" name="action" value="join_meeting">
+            <button type="submit" class="join-btn">Join Now</button>
+        </form>
+    <?php else: ?>
+        <span class="ended-status">
+            Meeting Ended on <?php echo date('M d, Y', strtotime($meeting['formatted_date'])); ?>
+        </span>
+    <?php endif; ?>
+</td>
+</tr>
+            <?php endforeach; ?>
+        <?php else: ?>
+            <tr>
+                <td colspan="6" class="no-meetings">No meetings scheduled</td>
+            </tr>
+        <?php endif; ?>
+    </tbody>
+</table>
         </div>
     </div>
 
-    <div class="content-section">
-        <table class="meetings-table">
-            <thead>
-                <tr>
-                    <th>Meeting Type</th>
-                    <th>Date</th>
-                    <th>Time</th>
-                    <th>Status</th>
-                    <th>Created At</th>
-                    <th>Action</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php if ($meetings): ?>
-                    <?php foreach ($meetings as $meeting): ?>
-                        <?php 
-                        $meeting_status = getMeetingStatus(
-                            $meeting['formatted_date'],
-                            $meeting['formatted_start_time'],
-                            $meeting['formatted_end_time']
-                        );
-                        ?>
-                        <tr class="meeting-row">
-                            <td><?php echo htmlspecialchars(ucfirst($meeting['meeting_type'])); ?></td>
-                            <td><?php echo date('M d, Y', strtotime($meeting['formatted_date'])); ?></td>
-                            <td class="meeting-time">
-                                <?php 
-                                echo date('h:i A', strtotime($meeting['formatted_start_time'])) . ' - ' . 
-                                     date('h:i A', strtotime($meeting['formatted_end_time'])); 
-                                ?>
-                            </td>
-                            <td>
-                                <div class="status-<?php echo $meeting_status['class']; ?>">
-                                    <span class="status-indicator"></span>
-                                    <span class="status-text">
-                                        <?php echo ucfirst($meeting_status['status']); ?>
-                                    </span>
-                                </div>
-                            </td>
-                            <td><?php echo date('M d, Y h:i A', strtotime($meeting['created_at'])); ?></td>
-                            <td class="meeting-action">
-                                <?php if ($meeting_status['status'] === 'scheduled'): ?>
-                                    <button type="button" class="join-btn disabled">Join Meeting</button>
-                                    <span class="countdown"></span>
-                                <?php elseif ($meeting_status['status'] === 'in progress'): ?>
-                                    <form method="POST" style="display: inline;">
-                                        <input type="hidden" name="meeting_id" value="<?php echo $meeting['id']; ?>">
-                                        <input type="hidden" name="action" value="join_meeting">
-                                        <button type="submit" class="join-btn">Join Now</button>
-                                    </form>
-                                <?php else: ?>
-                                    <span class="ended-status">
-                                        Meeting Ended on <?php echo date('M d, Y', strtotime($meeting['formatted_date'])); ?>
-                                    </span>
-                                <?php endif; ?>
-                            </td>
-                        </tr>
-                    <?php endforeach; ?>
-                <?php else: ?>
-                    <tr>
-                        <td colspan="6" class="no-meetings">No meetings scheduled</td>
-                    </tr>
-                <?php endif; ?>
-            </tbody>
-        </table>
-    </div>
-</div>
-
-<script>
-document.addEventListener('DOMContentLoaded', function() {
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+    // Initial update
     updateMeetingStatusesAndButtons();
+    
+    // Update every second
     setInterval(updateMeetingStatusesAndButtons, 1000);
+
+    // Add confirmation for joining meetings
+    window.confirmJoinMeeting = function(event) {
+        event.preventDefault();
+        if (confirm('Are you sure you want to join this meeting?')) {
+            window.location.href = event.target.href;
+        }
+        return false;
+    };
 });
 
 function updateMeetingStatusesAndButtons() {
@@ -869,30 +809,41 @@ function updateMeetingStatusesAndButtons() {
             const dateStr = row.children[1].textContent.trim();
             const timeRange = row.children[2].textContent.trim();
             const actionCell = row.querySelector('.meeting-action');
-
+            
+            // Parse time range
             const [startTimeStr, endTimeStr] = timeRange.split(' - ').map(t => t.trim());
+            
+            // Create date objects
             const startDateTime = parseDateTime(dateStr, startTimeStr);
             const endDateTime = parseDateTime(dateStr, endTimeStr);
             const now = new Date();
 
-            const timeToStart = startDateTime - now;
-            const timeToEnd = endDateTime - now;
+            // Get time differences in milliseconds
+            const timeToStart = startDateTime.getTime() - now.getTime();
+            const timeToEnd = endDateTime.getTime() - now.getTime();
 
+            // Get UI elements
             const statusCell = row.querySelector('.status-text');
             const statusIndicator = row.querySelector('.status-indicator');
             const joinBtn = actionCell.querySelector('.join-btn');
             const countdownSpan = actionCell.querySelector('.countdown');
+            const meetingUrl = joinBtn ? joinBtn.dataset.meetingUrl : '';
 
+
+            // Update meeting status based on time differences
             if (timeToStart > 0) {
+                // Future meeting
                 handleFutureMeeting(joinBtn, countdownSpan, timeToStart);
                 updateStatus(statusCell, statusIndicator, 'scheduled', 'Scheduled');
             } 
             else if (timeToEnd > 0) {
-                handleInProgressMeeting(actionCell, row.dataset.meetingId);
+                // In-progress meeting
+                handleInProgressMeeting(actionCell, meetingUrl);
                 updateStatus(statusCell, statusIndicator, 'in-progress', 'In Progress');
             } 
             else {
-                handleEndedMeeting(actionCell, endDateTime);
+                // Ended meeting
+                handleEndedMeeting(actionCell, dateStr, endDateTime);
                 updateStatus(statusCell, statusIndicator, 'ended', 'Ended');
             }
         } catch (error) {
@@ -904,23 +855,26 @@ function updateMeetingStatusesAndButtons() {
 function parseDateTime(dateStr, timeStr) {
     const dateMatch = dateStr.match(/([A-Za-z]+)\s+(\d+),\s+(\d{4})/);
     const timeMatch = timeStr.match(/(\d+):(\d+)\s+(AM|PM)/i);
-
+    
     if (!dateMatch || !timeMatch) {
         throw new Error(`Invalid date/time format: ${dateStr} ${timeStr}`);
     }
-
+    
     const [_, month, day, year] = dateMatch;
     const [__, hours, minutes, period] = timeMatch;
-
+    
     const date = new Date();
     date.setFullYear(parseInt(year));
     date.setMonth(getMonthNumber(month));
     date.setDate(parseInt(day));
-
+    
     let hour = parseInt(hours);
-    if (period.toUpperCase() === 'PM' && hour !== 12) hour += 12;
-    if (period.toUpperCase() === 'AM' && hour === 12) hour = 0;
-
+    if (period.toUpperCase() === 'PM' && hour !== 12) {
+        hour += 12;
+    } else if (period.toUpperCase() === 'AM' && hour === 12) {
+        hour = 0;
+    }
+    
     date.setHours(hour, parseInt(minutes), 0, 0);
     return date;
 }
@@ -944,17 +898,17 @@ function handleFutureMeeting(joinBtn, countdownSpan, timeToStart) {
     }
 }
 
-function handleInProgressMeeting(actionCell, meetingId) {
+function handleInProgressMeeting(actionCell, meetingUrl) {
     actionCell.innerHTML = `
         <form method="POST" style="display: inline;">
-            <input type="hidden" name="meeting_id" value="${meetingId}">
+           <input type="hidden" name="meeting_id" value="${meetingUrl.split('meeting_id=')[1]}">
             <input type="hidden" name="action" value="join_meeting">
             <button type="submit" class="join-btn">Join Now</button>
         </form>
     `;
 }
 
-function handleEndedMeeting(actionCell, endDateTime) {
+function handleEndedMeeting(actionCell, dateStr, endDateTime) {
     const formattedDateTime = endDateTime.toLocaleString('en-US', {
         month: 'short',
         day: '2-digit',
@@ -971,7 +925,7 @@ function updateStatus(statusCell, statusIndicator, className, text) {
         statusCell.textContent = text;
         const parentDiv = statusIndicator.closest('div');
         if (parentDiv) {
-            parentDiv.className = `status-${className}`;
+            parentDiv.className = `status-${className}-status`;
         }
     }
 }
@@ -999,6 +953,5 @@ function updateCountdown(timeLeft, countdownElement) {
     countdownElement.textContent = countdownText;
 }
 </script>
-
 </body>
 </html>
