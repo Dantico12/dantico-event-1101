@@ -14,10 +14,25 @@ if (!$conn) {
 }
 
 function generateEventCode($event_name) {
-    $base = substr(preg_replace('/[^A-Za-z0-9]/', '', $event_name), 0, 3);
-    $random = substr(str_shuffle('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'), 0, 7);
-    return strtoupper($base . $random);
+    // Break event name into words
+    $words = preg_split('/\s+/', strtoupper(preg_replace('/[^A-Za-z\s]/', '', $event_name)));
+    
+    // Get first two letters of first two words
+    $firstPart = '';
+    if (count($words) >= 2) {
+        $firstPart = substr($words[0], 0, 2) . substr($words[1], 0, 2);
+    } elseif (count($words) == 1) {
+        $firstPart = substr($words[0], 0, 4);
+    } else {
+        $firstPart = 'EVNT'; // fallback
+    }
+
+    // Generate random 2-digit number
+    $randomNumber = rand(10, 99);
+
+    return strtoupper($firstPart . $randomNumber);
 }
+
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     error_log("POST data received: " . print_r($_POST, true));
@@ -37,81 +52,90 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         error_log("Missing fields: " . implode(', ', $missing_fields));
     } else {
         try {
-            // Start transaction
-            $conn->begin_transaction();
-
-            $event_name = trim($_POST['event_name']);
+            // Validate event date (must be at least 3 days from now)
             $event_datetime = $_POST['event_datetime'];
-            $location = $_POST['location'];
-            $event_type = $_POST['event_type'];
-            $max_participants = $_POST['max_participants'];
-            $phone_paybill = isset($_POST['phone_paybill']) ? $_POST['phone_paybill'] : null;
+            $event_timestamp = strtotime($event_datetime);
+            $min_allowed_timestamp = strtotime('+3 days');
             
-            // Generate unique event code
-            do {
-                $event_code = generateEventCode($event_name);
-                $check_code = $conn->prepare("SELECT 1 FROM events WHERE event_code = ?");
-                $check_code->bind_param("s", $event_code);
-                $check_code->execute();
-                $result = $check_code->get_result();
-            } while ($result->num_rows > 0);
-            
-            // Insert event with all fields
-            $sql = "INSERT INTO events (
-                event_name, 
-                event_code, 
-                status, 
-                created_at,
-                phone_paybill,
-                event_type,
-                event_datetime,
-                location,
-                max_participants
-            ) VALUES (?, ?, 'active', NOW(), ?, ?, ?, ?, ?)";
-            
-            $stmt = $conn->prepare($sql);
-            
-            if (!$stmt) {
-                throw new Exception("Prepare failed: " . $conn->error);
+            if ($event_timestamp < $min_allowed_timestamp) {
+                $error_message = "Event date must be at least 3 days from today.";
+                error_log("Invalid event date: " . $event_datetime);
+            } else {
+                // Start transaction
+                $conn->begin_transaction();
+    
+                $event_name = trim($_POST['event_name']);
+                $location = $_POST['location'];
+                $event_type = $_POST['event_type'];
+                $max_participants = $_POST['max_participants'];
+                $phone_paybill = isset($_POST['phone_paybill']) ? $_POST['phone_paybill'] : null;
+                
+                // Generate unique event code
+                do {
+                    $event_code = generateEventCode($event_name);
+                    $check_code = $conn->prepare("SELECT 1 FROM events WHERE event_code = ?");
+                    $check_code->bind_param("s", $event_code);
+                    $check_code->execute();
+                    $result = $check_code->get_result();
+                } while ($result->num_rows > 0);
+                
+                // Insert event with all fields
+                $sql = "INSERT INTO events (
+                    event_name, 
+                    event_code, 
+                    status, 
+                    created_at,
+                    phone_paybill,
+                    event_type,
+                    event_datetime,
+                    location,
+                    max_participants
+                ) VALUES (?, ?, 'active', NOW(), ?, ?, ?, ?, ?)";
+                
+                $stmt = $conn->prepare($sql);
+                
+                if (!$stmt) {
+                    throw new Exception("Prepare failed: " . $conn->error);
+                }
+                
+                $stmt->bind_param("ssssssi", 
+                    $event_name, 
+                    $event_code, 
+                    $phone_paybill,
+                    $event_type,
+                    $event_datetime,
+                    $location,
+                    $max_participants
+                );
+                
+                if (!$stmt->execute()) {
+                    throw new Exception("Execute failed: " . $stmt->error);
+                }
+                
+                $event_id = $conn->insert_id;
+                
+                // Add creator as admin in event_members
+                $member_sql = "INSERT INTO event_members (event_id, user_id, role, committee_role) VALUES (?, ?, 'admin', 'organizer')";
+                $member_stmt = $conn->prepare($member_sql);
+                
+                if (!$member_stmt) {
+                    throw new Exception("Prepare member insert failed: " . $conn->error);
+                }
+                
+                $member_stmt->bind_param("ii", $event_id, $_SESSION['user_id']);
+                
+                if (!$member_stmt->execute()) {
+                    throw new Exception("Execute member insert failed: " . $member_stmt->error);
+                }
+                
+                $conn->commit();
+                
+                error_log("Event created successfully with ID: " . $event_id);
+                
+                $_SESSION['success_message'] = "Event created successfully!";
+                header("Location: dashboard.php?event_id=" . $event_id);
+                exit();
             }
-            
-            $stmt->bind_param("ssssssi", 
-                $event_name, 
-                $event_code, 
-                $phone_paybill,
-                $event_type,
-                $event_datetime,
-                $location,
-                $max_participants
-            );
-            
-            if (!$stmt->execute()) {
-                throw new Exception("Execute failed: " . $stmt->error);
-            }
-            
-            $event_id = $conn->insert_id;
-            
-            // Add creator as admin in event_members
-            $member_sql = "INSERT INTO event_members (event_id, user_id, role, committee_role) VALUES (?, ?, 'admin', 'organizer')";
-            $member_stmt = $conn->prepare($member_sql);
-            
-            if (!$member_stmt) {
-                throw new Exception("Prepare member insert failed: " . $conn->error);
-            }
-            
-            $member_stmt->bind_param("ii", $event_id, $_SESSION['user_id']);
-            
-            if (!$member_stmt->execute()) {
-                throw new Exception("Execute member insert failed: " . $member_stmt->error);
-            }
-            
-            $conn->commit();
-            
-            error_log("Event created successfully with ID: " . $event_id);
-            
-            $_SESSION['success_message'] = "Event created successfully!";
-            header("Location: dashboard.php?event_id=" . $event_id);
-            exit();
             
         } catch (Exception $e) {
             $conn->rollback();
@@ -120,6 +144,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 }
+
+// Calculate minimum date for client-side validation (3 days from now)
+$min_date = date('Y-m-d\TH:i', strtotime('+3 days'));
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -258,6 +285,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             transform-origin: bottom right;
             transition: 1.5s ease;
         }
+        
+        .error-message {
+            color: #f00;
+            text-align: center;
+            margin-bottom: 15px;
+            background: rgba(255, 0, 0, 0.1);
+            padding: 10px;
+            border-radius: 5px;
+        }
+        
+        .date-info {
+            color: #0ef;
+            text-align: center;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
     </style>
 </head>
 <body>
@@ -267,19 +310,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <h2>Create New Event</h2>
 
             <?php if (isset($error_message)): ?>
-                <div class="error-message" style="color: #f00; text-align: center;"><?php echo $error_message; ?></div>
+                <div class="error-message"><?php echo $error_message; ?></div>
             <?php endif; ?>
 
-            <form method="POST" action="" class="event-form">
+            <form method="POST" action="" class="event-form" id="eventForm">
                 <div class="input-box">
                     <input type="text" id="event_name" name="event_name" required>
                     <label for="event_name">Event Name*</label>
                 </div>
 
                 <div class="input-box">
-                    <input type="datetime-local" id="event_datetime" name="event_datetime" required>
+                    <input type="datetime-local" id="event_datetime" name="event_datetime" min="<?php echo $min_date; ?>" required>
                     <label for="event_datetime">Date and Time*</label>
                 </div>
+                <div class="date-info">Events must be scheduled at least 3 days from today</div>
 
                 <div class="input-box">
                     <input type="text" id="location" name="location" required>
@@ -301,7 +345,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <input type="number" id="max_participants" name="max_participants" min="1" required>
                     <label for="max_participants">Max Participants*</label>
                 </div>
-
                 
                 <div class="form-actions">
                     <button type="submit" class="create-btn">Create Event</button>
@@ -310,5 +353,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </form>
         </div>
     </div>
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const eventForm = document.getElementById('eventForm');
+            const datetimeInput = document.getElementById('event_datetime');
+            
+            eventForm.addEventListener('submit', function(e) {
+                const selectedDate = new Date(datetimeInput.value);
+                const minAllowedDate = new Date();
+                minAllowedDate.setDate(minAllowedDate.getDate() + 3);
+                
+                if (selectedDate < minAllowedDate) {
+                    e.preventDefault();
+                    alert('Event date must be at least 3 days from today.');
+                }
+            });
+        });
+    </script>
 </body>
 </html>

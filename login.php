@@ -1,109 +1,127 @@
 <?php
-session_start();
+session_start([
+    'cookie_lifetime' => 86400,
+    'cookie_secure' => isset($_SERVER['HTTPS']), // Works for both HTTP and HTTPS
+    'cookie_httponly' => true,
+    'cookie_samesite' => 'Lax', // Balanced security
+    'use_strict_mode' => true
+]);
+
 require_once 'db.php';
 
-// Function to sanitize input data
-function sanitize_input($data) {
-    $data = trim($data);
-    $data = stripslashes($data);
-    $data = htmlspecialchars($data);
-    return $data;
+$response = ['status' => '', 'message' => ''];
+
+// Input validation functions
+function validate_username($username) {
+    $username = trim($username);
+    return preg_match('/^[a-zA-Z0-9_\-.]{3,20}$/', $username) ? $username : false;
 }
 
-// Initialize response array
-$response = [
-    'status' => '',
-    'message' => ''
-];
+function validate_email($email) {
+    $email = trim($email);
+    return filter_var($email, FILTER_VALIDATE_EMAIL) ? $email : false;
+}
+
+function validate_password($password) {
+    return strlen($password) >= 8 ? $password : false;
+}
 
 // Handle Registration
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['register'])) {
-    $username = sanitize_input($_POST['username']);
-    $email = sanitize_input($_POST['email']);
-    $password = $_POST['password'];
+    $username = validate_username($_POST['username'] ?? '');
+    $email = validate_email($_POST['email'] ?? '');
+    $password = validate_password($_POST['password'] ?? '');
 
-    if (empty($username) || empty($email) || empty($password)) {
-        $response['status'] = 'error';
-        $response['message'] = 'All fields are required';
-    } else {
-        $stmt = $conn->prepare("SELECT * FROM users WHERE username = ? OR email = ?");
-        $stmt->bind_param("ss", $username, $email);
-        $stmt->execute();
-        $result = $stmt->get_result();
-
-        if ($result->num_rows > 0) {
-            $response['status'] = 'error';
-            $response['message'] = 'Username or email already exists';
-        } else {
-            $hashed_password = password_hash($password, PASSWORD_DEFAULT);
-            $stmt = $conn->prepare("INSERT INTO users (username, email, password) VALUES (?, ?, ?)");
-            $stmt->bind_param("sss", $username, $email, $hashed_password);
-
-            if ($stmt->execute()) {
-                $response['status'] = 'success';
-                $response['message'] = 'Registration successful! Redirecting to login...';
-            } else {
-                $response['status'] = 'error';
-                $response['message'] = 'Registration failed. Please try again.';
-            }
-        }
-        $stmt->close();
+    if (!$username || !$email || !$password) {
+        $response = ['status' => 'error', 'message' => 'Invalid input data'];
+        respond($response);
     }
+
+    // Check if user exists
+    $stmt = $conn->prepare("SELECT id FROM users WHERE username = ? OR email = ?");
+    $stmt->bind_param("ss", $username, $email);
+    $stmt->execute();
     
-    // Always return JSON for register requests as your JS expects it
-    header('Content-Type: application/json');
-    echo json_encode($response);
-    exit;
+    if ($stmt->get_result()->num_rows > 0) {
+        $response = ['status' => 'error', 'message' => 'Username or email already exists'];
+        respond($response);
+    }
+
+    // Create account
+    $hashed_password = password_hash($password, PASSWORD_DEFAULT);
+    $stmt = $conn->prepare("INSERT INTO users (username, email, password) VALUES (?, ?, ?)");
+    $stmt->bind_param("sss", $username, $email, $hashed_password);
+
+    if ($stmt->execute()) {
+        $response = ['status' => 'success', 'message' => 'Registration successful! Redirecting...'];
+    } else {
+        $response = ['status' => 'error', 'message' => 'Registration failed. Please try again.'];
+    }
+    respond($response);
 }
 
-// Handle Login
+// Handle Login with rate limiting
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['login'])) {
-    $username = sanitize_input($_POST['username']);
-    $password = $_POST['password'];
-
-    if (empty($username) || empty($password)) {
-        $response['status'] = 'error';
-        $response['message'] = 'Both username and password are required';
-    } else {
-        $stmt = $conn->prepare("SELECT id, username, password, role FROM users WHERE username = ?");
-        $stmt->bind_param("s", $username);
-        $stmt->execute();
-        $result = $stmt->get_result();
-
-        if ($user = $result->fetch_assoc()) {
-            if (password_verify($password, $user['password'])) {
-                $_SESSION['user_id'] = $user['id'];
-                $_SESSION['username'] = $user['username'];
-                $_SESSION['role'] = $user['role'];
-                
-                $response['status'] = 'success';
-                $response['message'] = 'Login successful! Redirecting...';
-                $response['redirect'] = 'index.html'; // Your JavaScript will handle this redirect
-            } else {
-                $response['status'] = 'error';
-                $response['message'] = 'Invalid password';
-            }
-        } else {
-            $response['status'] = 'error';
-            $response['message'] = 'User not found';
-        }
-        $stmt->close();
+    // Rate limiting
+    $current_time = time();
+    if (($_SESSION['login_attempts'] ?? 0) > 5 && 
+        $current_time - ($_SESSION['last_attempt'] ?? 0) < 300) {
+        $response = ['status' => 'error', 'message' => 'Too many attempts. Try again later.'];
+        respond($response);
     }
-    
-    // Always return JSON for login requests as your JS expects it
+
+    $username = validate_username($_POST['username'] ?? '');
+    $password = $_POST['password'] ?? '';
+
+    if (!$username || empty($password)) {
+        $response = ['status' => 'error', 'message' => 'Invalid credentials'];
+        respond($response);
+    }
+
+    // Check user
+    $stmt = $conn->prepare("SELECT id, username, password, role FROM users WHERE username = ?");
+    $stmt->bind_param("s", $username);
+    $stmt->execute();
+    $result = $stmt->get_result();
+
+    if ($user = $result->fetch_assoc()) {
+        if (password_verify($password, $user['password'])) {
+            // Successful login
+            $_SESSION['user_id'] = $user['id'];
+            $_SESSION['username'] = $user['username'];
+            $_SESSION['role'] = $user['role'];
+            $_SESSION['login_attempts'] = 0;
+            
+            $response = [
+                'status' => 'success', 
+                'message' => 'Login successful!', 
+                'redirect' => 'index.html'
+            ];
+        } else {
+            // Failed attempt
+            $_SESSION['login_attempts'] = ($_SESSION['login_attempts'] ?? 0) + 1;
+            $_SESSION['last_attempt'] = $current_time;
+            $response = ['status' => 'error', 'message' => 'Invalid credentials'];
+        }
+    } else {
+        $response = ['status' => 'error', 'message' => 'Invalid credentials'];
+    }
+    respond($response);
+}
+
+function respond($response) {
     header('Content-Type: application/json');
     echo json_encode($response);
     exit;
 }
-
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login page</title>
+    <meta name="csrf-token" content="<?php echo $_SESSION['csrf_token']; ?>">
+    <title>Secure Login System</title>
     <link rel="stylesheet" href="style.css">
     <link href='https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css' rel='stylesheet'>
     <style>
@@ -116,10 +134,22 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['login'])) {
         }
         .error { background-color: rgba(255, 0, 0, 0.1); color: #ff3333; }
         .success { background-color: rgba(0, 255, 0, 0.1); color: #00cc00; }
+        .password-strength {
+            display: flex;
+            gap: 2px;
+            margin-top: 5px;
+            height: 3px;
+        }
+        .strength-bar {
+            flex: 1;
+            background: #ddd;
+            border-radius: 2px;
+        }
+        .strength-bar.active { background: #00cc00; }
     </style>
 </head>
 <body>
-    <div class="wrapper">
+<div class="wrapper">
         <span class="bg-animate"></span>
         <span class="bg-animate2"></span>
         
@@ -156,6 +186,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['login'])) {
                 <div class="input-box animation" style="--i:18;">
                     <input type="text" name="username" required>
                     <label>Username</label>
+                    ￼
                     <i class='bx bxs-user'></i>
                 </div>
                 <div class="input-box animation" style="--i:19;">

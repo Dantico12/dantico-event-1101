@@ -1,34 +1,34 @@
 <?php
 session_start();
-require_once 'db.php';
-// Timezone setting
+require 'db.php';
+
+// Initialize variables
+$event_id = 0;
+$base_url = '';
+$error_message = '';
+
+// Set timezone
 date_default_timezone_set('Africa/Nairobi');
 
+// Validate and set event ID from different possible sources
+if (isset($_GET['event_id'])) {
+    $event_id = (int)$_GET['event_id'];
+} elseif (isset($_SESSION['current_event_id'])) {
+    $event_id = (int)$_SESSION['current_event_id'];
+} else {
+    $error_message = "No event ID provided";
+}
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'join_meeting') {
-    $meeting_id = $_POST['meeting_id'] ?? '';
+// Store event context in session if valid
+if ($event_id > 0) {
+    $_SESSION['current_event_id'] = $event_id;
     
-    if ($meeting_id) {
-        $redirect_url = 'video-conference.php?' . http_build_query([
-            'event_id' => $_SESSION['current_event_id'],
-            'event_code' => $_SESSION['current_event_code'],
-            'meeting_id' => $meeting_id
-        ]);
-        
-        header("Location: " . $redirect_url);
-        exit;
+    if (isset($_GET['event_code'])) {
+        $_SESSION['current_event_code'] = $_GET['event_code'];
     }
 }
-// Validate event session
-if (!isset($_SESSION['current_event_id']) || !isset($_SESSION['current_event_code'])) {
-    header("Location: events.php");
-    exit;
-}
 
-$current_event_id = $_SESSION['current_event_id'];
-$current_event_code = $_SESSION['current_event_code'];
-
-// Function to generate base URL with event context
+// Generate base URL for navigation
 function getEventContextURL($additional_params = []) {
     $base_params = [
         'event_id' => $_SESSION['current_event_id'] ?? '',
@@ -38,14 +38,56 @@ function getEventContextURL($additional_params = []) {
     $params = array_merge($base_params, $additional_params);
     return '?' . http_build_query($params);
 }
-// Get event details
+
+// Set base URL for use in templates
+$base_url = getEventContextURL();
+
+// Fetch event details
 function getEventDetails($conn, $event_id) {
-    $stmt = $conn->prepare("SELECT event_name FROM events WHERE id = ?");
+    if ($event_id <= 0) return null;
+    
+    $sql = "SELECT * FROM events WHERE id = ?";
+    $stmt = $conn->prepare($sql);
     $stmt->bind_param("i", $event_id);
-    $stmt->execute();
-    $result = $stmt->get_result();
-    return $result->fetch_assoc();
+    
+    if ($stmt->execute()) {
+        $result = $stmt->get_result();
+        return $result->fetch_assoc();
+    }
+    
+    return null;
 }
+
+// Fetch user roles and event context
+function getUserRoles($conn, $user_id, $event_id) {
+    $sql = "SELECT em.role, em.committee_role, e.* 
+            FROM event_members em
+            JOIN events e ON em.event_id = e.id 
+            WHERE em.user_id = ? AND em.event_id = ? AND em.status = 'active'";
+    
+    $stmt = $conn->prepare($sql);
+    $stmt->bind_param("ii", $user_id, $event_id);
+    $stmt->execute();
+    return $stmt->get_result()->fetch_assoc();
+}
+
+// Function to check user's role access
+function hasAccess($required_roles, $user_role, $committee_role) {
+    if ($user_role === 'admin' || $user_role === 'organizer') {
+        return true;
+    }
+    $required_roles = array_map('strtolower', $required_roles);
+    if ($user_role === 'member' && !empty($committee_role)) {
+        $committee_role = strtolower($committee_role);
+        return in_array($committee_role, $required_roles);
+    }
+    if ($user_role === 'member' && empty($committee_role)) {
+        return in_array('member', $required_roles);
+    }
+    return false;
+}
+
+// Function to determine meeting status
 function getMeetingStatus($meeting_date, $start_time, $end_time) {
     try {
         // Create DateTime objects with explicit timezone
@@ -121,6 +163,8 @@ function getMeetingStatus($meeting_date, $start_time, $end_time) {
         ];
     }
 }
+
+// Function to fetch meetings
 function getMeetings($conn, $event_id) {
     try {
         $stmt = $conn->prepare("
@@ -154,11 +198,44 @@ function getMeetings($conn, $event_id) {
     }
 }
 
+// Handle meeting join requests
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'join_meeting') {
+    $meeting_id = $_POST['meeting_id'] ?? '';
+    
+    if ($meeting_id) {
+        $redirect_url = 'video-conference.php?' . http_build_query([
+            'event_id' => $_SESSION['current_event_id'],
+            'event_code' => $_SESSION['current_event_code'],
+            'meeting_id' => $meeting_id
+        ]);
+        
+        header("Location: " . $redirect_url);
+        exit;
+    }
+}
 
-// Initialize variables
-$base_url = getEventContextURL();
-$event = getEventDetails($conn, $current_event_id);
-$meetings = getMeetings($conn, $current_event_id);
+// Get current user's roles
+$user_id = $_SESSION['user_id'] ?? null;
+$user_roles = $user_id && $event_id ? getUserRoles($conn, $user_id, $event_id) : null;
+$user_role = $user_roles['role'] ?? '';
+$committee_role = $user_roles['committee_role'] ?? '';
+
+// Get data for the page
+$event = getEventDetails($conn, $event_id);
+
+// Fetch meetings
+$meetings = getMeetings($conn, $event_id);
+
+// Handle errors
+if (!$event) {
+    $error_message = "Event not found";
+}
+
+// IMPORTANT: We are NOT processing meetings here anymore
+// This was causing issues because we were nesting the status in 'status_info'
+// The template expects the status directly from the getMeetingStatus function
+
+// Don't close the connection here if it's still needed in the rest of the page
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -610,15 +687,13 @@ $meetings = getMeetings($conn, $current_event_id);
 </head>
 <body>
 
-  
-<!-- Sidebar Navigation -->
-<nav class="sidebar">
+<nav class="sidebar" <?= !hasAccess(['Treasurer', 'Secretary', 'Chairman', 'Admin', 'member'], $user_role, $committee_role) ? 'style="display: none;"' : '' ?>>
     <div class="sidebar-header">
         <i class='bx bx-calendar-event' style="color: #0ef; font-size: 24px;"></i>
         <h2>Dantico Events</h2>
     </div>
     <div class="sidebar-menu">
-        <!-- Dashboard -->
+        <!-- Dashboard (accessible to all) -->
         <div class="menu-category">
             <div class="menu-item active">
                 <a href="./dashboard.php<?= $base_url ?>">
@@ -628,9 +703,21 @@ $meetings = getMeetings($conn, $current_event_id);
             </div>
         </div>
 
+        <!-- Paybill Section (Visible only to Treasurer and Admin) -->
+        <?php if (hasAccess(['Treasurer', 'Admin'], $user_role, $committee_role)): ?>
+        <div class="menu-category">
+            <div class="category-title">Paybill</div>
+            <div class="menu-item">
+                <a href="./paybill.php<?= $base_url ?>">
+                    <i class='bx bx-plus-circle'></i>
+                    <span>Add Paybill</span>
+                </a>
+            </div>
+        </div>
+        <?php endif; ?>
+
         <!-- Committees Section -->
         <div class="menu-category">
-            
             <div class="menu-item">
                 <a href="./committee-list.php<?= $base_url ?>">
                     <i class='bx bx-group'></i>
@@ -639,14 +726,26 @@ $meetings = getMeetings($conn, $current_event_id);
             </div>
         </div>
 
-        <!-- Communication Section -->
+        <!-- Minutes Section (Visible only to Secretary) -->
+        <?php if (hasAccess(['Secretary'], $user_role, $committee_role)): ?>
+        <div class="menu-category">
+            <div class="category-title">Reviews</div>
+            <div class="menu-item">
+                <a href="./minutes.php<?= $base_url ?>">
+                    <i class='bx bxs-timer'></i>
+                    <span>Minutes</span>
+                </a>
+            </div>
+        </div>
+        <?php endif; ?>
+
+        <!-- Communication Section (accessible to all) -->
         <div class="menu-category">
             <div class="category-title">Communication</div>
             <div class="menu-item">
                 <a href="./chat.php<?= $base_url ?>">
                     <i class='bx bx-message-rounded-dots'></i>
                     <span>Chat System</span>
-                    <div class="notification-badge">3</div>
                 </a>
             </div>
             <div class="menu-item">
@@ -657,7 +756,7 @@ $meetings = getMeetings($conn, $current_event_id);
             </div>
         </div>
 
-        <!-- Contributions Section -->
+        <!-- Contributions Section (accessible to all) -->
         <div class="menu-category">
             <div class="category-title">Contributions</div>
             <div class="menu-item">
@@ -674,19 +773,18 @@ $meetings = getMeetings($conn, $current_event_id);
             </div>
         </div>
 
-        <!-- Reviews Section -->
+        <!-- Tasks Section (accessible to all) -->
         <div class="menu-category">
-            
+            <div class="category-title">Tasks</div>
             <div class="menu-item">
                 <a href="./tasks.php<?= $base_url ?>">
                     <i class='bx bx-task'></i>
                     <span>Tasks</span>
                 </a>
             </div>
-            
         </div>
 
-        <!-- Other Tools -->
+        <!-- Schedule Section (accessible to all) -->
         <div class="menu-category">
             <div class="category-title">Tools</div>
             <div class="menu-item">
@@ -695,10 +793,10 @@ $meetings = getMeetings($conn, $current_event_id);
                     <span>Schedule</span>
                 </a>
             </div>
-          
         </div>
     </div>
 </nav>
+  
 <div class="main-content">
         <div class="header">
             <button class="toggle-btn">
